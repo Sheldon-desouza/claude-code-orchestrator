@@ -6,14 +6,14 @@ on:
 
 defaults:
   run:
-    shell: bash  # explicit bash enables pipefail — `cmd | tail` can't mask a red exit
+    shell: bash
 
 jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]  # hooks shell out to ps/tmux; BSD vs procps differs
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -22,3 +22,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install pytest
       - run: python -m pytest tests/ -q
+      - name: doctor
+        run: python scripts/doctor.py
+        env:
+          ORCH_METRICS: "0"
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JSON manifests parse
+        run: |
+          python3 -c "import json,sys; [json.load(open(p)) for p in ['.claude-plugin/plugin.json','.claude-plugin/marketplace.json','hooks/hooks.json','config/tiers.json','config/routing.json']]; print('ok')"
+      - name: no secrets, emails or private paths
+        run: |
+          ! grep -rInE "(sk-ant-|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|xox[bp]-|-----BEGIN [A-Z ]*PRIVATE KEY)" --exclude-dir=.git --exclude-dir=.github .
+          # no email addresses anywhere except the attribution files
+          ! grep -rInoE "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}" --exclude-dir=.git --exclude-dir=.github --exclude=LICENSE --exclude=NOTICE --exclude=CHANGELOG.md . | grep -v "noreply@anthropic.com"
+          ! grep -rIn "/Users/" --exclude-dir=.git --exclude-dir=.github .

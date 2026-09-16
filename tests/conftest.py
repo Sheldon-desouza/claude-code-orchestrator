@@ -18,14 +18,17 @@ STRIP_ENV = [
     "LEDGER_GUARD_TASKS",
     "LEDGER_GUARD_CLARIFY",
     "LEDGER_GUARD_STOP_MODE",
-    "FABLE_ORCH_METRICS",
-    "FABLE_ORCH_SWARM_CLEANUP",
-    "FABLE_ORCH_SWARM_MAX_IDLE_H",
-    "FABLE_ORCH_TEAMMATE_IDLE_H",
-    "FABLE_ORCH_TEAMMATE_IDLE_RATE",
-    "FABLE_ORCH_PROFILE",
-    "FABLE_ORCH_TEAMMATE_STOP",
-    "FABLE_ORCH_TEAMMATE_INJECT",
+    "ORCH_METRICS",
+    "ORCH_SWARM_CLEANUP",
+    "ORCH_SWARM_MAX_IDLE_H",
+    "ORCH_TEAMMATE_IDLE_H",
+    "ORCH_TEAMMATE_IDLE_RATE",
+    "ORCH_PROFILE",
+    "ORCH_TEAMMATE_STOP",
+    "ORCH_TEAMMATE_INJECT",
+    "ORCH_ROUTE_GUARD",
+    "ORCH_VERIFY_GUARD",
+    "ORCH_CONFIG_DIR",
     "CLAUDE_CONFIG_DIR",
     "TMUX_TMPDIR",
     "CLAUDE_PLUGIN_ROOT",
@@ -43,7 +46,7 @@ def _chair_ps_dir():
     correctly decides "teammate", skips its chair behaviour, and ~40
     tests fail for a reason that has nothing to do with the code under
     test. Pinning the ambient here is the same move as the
-    CLAUDE_CONFIG_DIR and FABLE_ORCH_SWARM_CLEANUP defaults below: the
+    CLAUDE_CONFIG_DIR and ORCH_SWARM_CLEANUP defaults below: the
     sandbox states its own world instead of inheriting the developer's.
 
     Only the ancestor-walk invocation is answered; every other `ps`
@@ -51,7 +54,7 @@ def _chair_ps_dir():
     the detection supplies its own `ps` via env_extra["PATH"] and never
     reaches this shim.
     """
-    bin_dir = Path(tempfile.mkdtemp(prefix="fable-orch-testshim-"))
+    bin_dir = Path(tempfile.mkdtemp(prefix="orch-testshim-"))
     ps = bin_dir / "ps"
     ps.write_text(
         "#!/usr/bin/env python3\n"
@@ -74,13 +77,19 @@ def run_hook(script, payload=None, raw=None, env_extra=None, tmpdir=None):
     session-cache reads/writes stay inside the test sandbox.
     """
     env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
-    env["FABLE_ORCH_METRICS"] = "0"        # keep tests from writing ~/.claude metrics
-    env["FABLE_ORCH_SWARM_CLEANUP"] = "0"  # keep tests away from real tmux servers
+    env["ORCH_METRICS"] = "0"        # keep tests from writing ~/.claude metrics
+    env["ORCH_SWARM_CLEANUP"] = "0"  # keep tests away from real tmux servers
+    # The route and verify gates are NEW on top of the upstream suite;
+    # legacy tests exercise the ledger gates alone. A test about a new
+    # gate turns it on explicitly via env_extra.
+    env.setdefault("ORCH_ROUTE_GUARD", "0")
+    env.setdefault("ORCH_VERIFY_GUARD", "0")
+    env["ORCH_CONFIG_DIR"] = str(Path(tmpdir) / "orchcfg") if tmpdir else "/nonexistent-orch-cfg"
     # Point Claude Code config at an (empty) sandbox dir so the injector's
     # settings.json model-detection never reads the developer's real
     # default. A test that wants the settings fallback writes
     # <tmpdir>/cfg/settings.json; others get no model key -> no leak.
-    env["CLAUDE_CONFIG_DIR"] = str(Path(tmpdir) / "cfg") if tmpdir else "/nonexistent-fable-orch-cfg"
+    env["CLAUDE_CONFIG_DIR"] = str(Path(tmpdir) / "cfg") if tmpdir else "/nonexistent-orch-cfg"
     if tmpdir is not None:
         env["TMPDIR"] = str(tmpdir)
         env["TEMP"] = str(tmpdir)
@@ -92,8 +101,8 @@ def run_hook(script, payload=None, raw=None, env_extra=None, tmpdir=None):
         env["PATH"] = _chair_ps_dir() + os.pathsep + env.get("PATH", "")
     # Insurance: a test that turns the swarm cleanup ON without pointing
     # tmux at a sandbox would sweep the developer's REAL tmux servers.
-    assert env.get("FABLE_ORCH_SWARM_CLEANUP") != "1" or "TMUX_TMPDIR" in env, \
-        "FABLE_ORCH_SWARM_CLEANUP=1 requires a sandboxed TMUX_TMPDIR"
+    assert env.get("ORCH_SWARM_CLEANUP") != "1" or "TMUX_TMPDIR" in env, \
+        "ORCH_SWARM_CLEANUP=1 requires a sandboxed TMUX_TMPDIR"
     stdin = raw if raw is not None else json.dumps(payload or {})
     proc = subprocess.run(
         [sys.executable, str(SCRIPTS / script)],

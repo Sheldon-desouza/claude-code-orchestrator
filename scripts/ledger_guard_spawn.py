@@ -67,7 +67,7 @@ Configuration (all optional):
                              0 or negative disables the task gate)
     LEDGER_GUARD_CLARIFY=0   disables the Rule 0.5 clarify gate; the
                              ledger gates keep working
-    FABLE_ORCH_METRICS=0     disables the local metrics log
+    ORCH_METRICS=0     disables the local metrics log
 """
 import json
 import os
@@ -75,6 +75,9 @@ import re
 import sys
 import tempfile
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tiers import class_of_prompt, load_routing, load_tiers, rank, tier_of  # noqa: E402
 
 try:
     import fcntl
@@ -140,11 +143,11 @@ _BRANCH_WORDS = ("branch", "dal")
 
 
 def _metric(event, session_id=None, **extra):
-    """Append one event line to ~/.claude/fable-orch/metrics.jsonl (best effort)."""
-    if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
+    """Append one event line to ~/.claude/orchestrator/metrics.jsonl (best effort)."""
+    if (os.environ.get("ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.join(os.path.expanduser("~"), ".claude", "orchestrator")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:
@@ -180,7 +183,7 @@ def _task_sidecar(session_id):
     if not session_id:
         return None
     safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
-    return os.path.join(tempfile.gettempdir(), f"fable-orch-tasks-{safe}.json")
+    return os.path.join(tempfile.gettempdir(), f"orch-tasks-{safe}.json")
 
 
 def _bump_task_count(path, key="denied"):
@@ -379,7 +382,7 @@ def _session_started(session_id):
     if not session_id:
         return None
     safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
-    path = os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+    path = os.path.join(tempfile.gettempdir(), f"orch-model-{safe}.json")
     if not os.path.isfile(path):
         return None
     try:
@@ -749,6 +752,124 @@ def _deny(reason):
     }))
 
 
+def _session_model(session_id):
+    """The chair's model as the injector marker recorded it, or None."""
+    if not session_id:
+        return None
+    safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+    path = os.path.join(tempfile.gettempdir(), f"orch-model-{safe}.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("model")
+    except Exception:
+        return None
+
+
+def _agent_tiers(routing):
+    """{agent name: tier} for the shipped orch-* agents, from the routing
+    table (each class names its agent and its minimum tier, and the
+    agent pins exactly that tier's model)."""
+    out = {}
+    for entry in routing.get("classes", {}).values():
+        agent = entry.get("agent")
+        if agent:
+            out[str(agent)] = entry.get("min_tier")
+    return out
+
+
+def route_check(data, tool_input, text):
+    """Route guard (Rule 3 + the routing table): the spawn's class tag
+    must exist, be known, be delegable, and its worker's tier must sit
+    inside the class's [min_tier, max_tier] band.
+
+    Returns a deny reason, or None to pass. Fails OPEN on anything it
+    cannot resolve — an unknown model, an unreadable table — because a
+    routing rule must never block work on a config typo; the metric
+    records the pass with its reason so /orch-stats shows the gap.
+
+    ORCH_ROUTE_GUARD=0 disables it.
+    """
+    if (os.environ.get("ORCH_ROUTE_GUARD") or "").strip() == "0":
+        return None
+    session_id = data.get("session_id")
+    routing = load_routing()
+    tiers = load_tiers()
+    order = routing.get("order") or list(tiers)
+    classes = routing.get("classes", {})
+    known = ", ".join(sorted(classes))
+
+    cls = class_of_prompt(text)
+    if cls is None:
+        _metric("route_deny", session_id, reason="untagged")
+        return (
+            "ROUTE GUARD: this spawn prompt has no class tag. Put "
+            "`Class: <class>` on its FIRST line so the worker is routed to "
+            f"the right tier (known classes: {known}); the class table is in "
+            "`orchestrator:playbook`. Then re-spawn."
+        )
+    entry = classes.get(cls)
+    if not isinstance(entry, dict):
+        _metric("route_deny", session_id, reason="unknown-class", cls=cls)
+        return (
+            f"ROUTE GUARD: `Class: {cls}` is not in the routing table "
+            f"(known: {known}). Pick the closest class and re-spawn."
+        )
+    lo, hi = entry.get("min_tier"), entry.get("max_tier") or entry.get("min_tier")
+    if lo == "chair":
+        _metric("route_deny", session_id, reason="chair-only", cls=cls)
+        return (
+            f"ROUTE GUARD: `Class: {cls}` is chair-only work — arbitration and "
+            "the escalation ceiling are yours, not a worker's. Do it here, or "
+            "re-classify the spawn."
+        )
+
+    # Which tier will run this spawn? An explicit model wins; a shipped
+    # orch-* agent pins its tier; anything else inherits the chair.
+    model = tool_input.get("model")
+    agent = str(tool_input.get("subagent_type") or "").strip()
+    if isinstance(model, str) and model.strip():
+        tier, how = tier_of(model, tiers), "model"
+    elif agent in _agent_tiers(routing):
+        tier, how = _agent_tiers(routing)[agent], "agent"
+    else:
+        chair_model = _session_model(session_id)
+        tier = tier_of(chair_model, tiers) if chair_model else None
+        how = "inherit"
+        if tier is None:
+            tier = "chair"   # no marker or an unknown chair model: it IS the chair
+    if tier is None or rank(tier, order) < 0 or rank(lo, order) < 0:
+        _metric("route_pass", session_id, cls=cls, tier=tier, how=how,
+                reason="unresolved")
+        return None
+
+    if rank(tier, order) < rank(lo, order):
+        _metric("route_deny", session_id, reason="below-tier", cls=cls,
+                tier=tier, how=how)
+        want = entry.get("agent") or f"a `{lo}`-tier model"
+        return (
+            f"ROUTE GUARD: `Class: {cls}` needs at least the `{lo}` tier "
+            f"({tiers.get(lo, {}).get('model', lo)}), but this spawn would run "
+            f"on `{tier}`. Spawn `{want}` instead (or pass model: "
+            f"{tiers.get(lo, {}).get('model', lo)}). Security and verification "
+            "never run below the heavy tier."
+        )
+    if hi and rank(hi, order) >= 0 and rank(tier, order) > rank(hi, order):
+        _metric("route_deny", session_id, reason="above-tier", cls=cls,
+                tier=tier, how=how)
+        want = entry.get("agent") or f"a `{hi}`-tier model"
+        return (
+            f"ROUTE GUARD: `Class: {cls}` is `{lo}`-to-`{hi}` tier work, but this "
+            f"spawn would run on `{tier}`"
+            + (" (a built-in agent inherits the CHAIR's model)" if how == "inherit" else "")
+            + f" — that spends the expensive tier on volume, which is what this "
+            f"plugin exists to stop. Spawn `{want}` instead (or pass model: "
+            f"{tiers.get(hi, {}).get('model', hi)}). If the work really needs "
+            "a stronger tier, re-classify it (`hard`, `security`, `verify`)."
+        )
+    _metric("route_pass", session_id, cls=cls, tier=tier, how=how)
+    return None
+
+
 def _guard(data):
     if (data.get("tool_name") or "") == "TaskCreate":
         guard_task_create(data)
@@ -781,6 +902,13 @@ def _guard(data):
         _metric("spawn_pass_over_threshold", session_id,
                 chars=len(text), threshold=limit,
                 tool=data.get("tool_name") or "")
+        # The ledger gates are satisfied; now the ROUTE gate — only for
+        # spawns (a Workflow script carries many spawns and no single
+        # class; its own agent() calls are gated when they fire).
+        if (data.get("tool_name") or "") in ("Agent", "Task"):
+            reason = route_check(data, tool_input, text)
+            if reason:
+                _deny(reason)
         return
 
     if blocker == "unclarified":

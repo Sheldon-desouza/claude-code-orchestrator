@@ -77,7 +77,7 @@ def test_stale_ledger_from_before_session_passes(repo_dir, tmp_path):
     # Ledger predates the session start (cache mtime) -> another session's
     # workflow; this session is not held on it.
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache = tmp_path / "orch-model-test-session.json"
     cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")
     old = time.time() - 3600
     os.utime(ledger, (old, old))
@@ -87,7 +87,7 @@ def test_stale_ledger_from_before_session_passes(repo_dir, tmp_path):
 def test_ledger_touched_this_session_blocks(repo_dir, tmp_path):
     # Session started an hour ago; the ledger was written just now -> owned.
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache = tmp_path / "orch-model-test-session.json"
     cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")
     old = time.time() - 3600
     os.utime(cache, (old, old))
@@ -101,7 +101,7 @@ def test_ownership_survives_compact_reinjection(repo_dir, tmp_path):
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
     mid = time.time() - 1800
     os.utime(ledger, (mid, mid))
-    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache = tmp_path / "orch-model-test-session.json"
     cache.write_text(
         json.dumps({"profile": "fable", "started": time.time() - 3600}),
         encoding="utf-8",
@@ -174,7 +174,7 @@ PANE_KEY = "claude-swarm-111:%1:12345"  # socket : pane id : pid
 
 
 def _seed_pane_state(home, cpu=5.0, since_ago=7200, stale_marker=True, key=PANE_KEY):
-    d = home / ".claude" / "fable-orch"
+    d = home / ".claude" / "orchestrator"
     d.mkdir(parents=True, exist_ok=True)
     state = d / "swarm-state.json"
     state.write_text(json.dumps(
@@ -238,7 +238,7 @@ def test_first_sighting_never_reaped(repo_dir, tmp_path):
     env, kill_log, home = _pane_env(tmp_path)
     assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
     assert not kill_log.exists()
-    state = home / ".claude" / "fable-orch" / "swarm-state.json"
+    state = home / ".claude" / "orchestrator" / "swarm-state.json"
     assert json.loads(state.read_text(encoding="utf-8"))["panes"][PANE_KEY]["cpu"] == 5.0
 
 
@@ -295,7 +295,7 @@ def test_wrong_typed_stop_sidecar_recovers(repo_dir, tmp_path):
     # {"blocked": [1]} used to TypeError past the decision print — the
     # guard must still block, exit 0, and rewrite a proper dict.
     write_ledger(repo_dir, "- [ ] 1. open\n")
-    sidecar = tmp_path / "fable-orch-stop-test-session.json"
+    sidecar = tmp_path / "orch-stop-test-session.json"
     sidecar.write_text(json.dumps({"blocked": [1]}), encoding="utf-8")
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
     assert isinstance(json.loads(sidecar.read_text())["blocked"], dict)
@@ -342,7 +342,7 @@ def test_future_started_still_owns(repo_dir, tmp_path):
     # A marker `started` in the future (clock jump) must clamp to now —
     # not silently disown every ledger for the whole session.
     write_ledger(repo_dir, "- [ ] 1. open\n")
-    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache = tmp_path / "orch-model-test-session.json"
     cache.write_text(json.dumps({"started": time.time() + 3600}), encoding="utf-8")
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
 
@@ -591,7 +591,7 @@ def test_teammate_close_is_never_held(repo_dir, tmp_path):
     env = {"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
     assert run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
     # The escape hatch restores the old behaviour.
-    env["FABLE_ORCH_TEAMMATE_STOP"] = "1"
+    env["ORCH_TEAMMATE_STOP"] = "1"
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path))
 
 
@@ -628,7 +628,7 @@ def test_marker_touch_does_not_disown_a_started_less_marker(repo_dir, tmp_path):
     # touch ran first it would reset that to "now" and silently disown
     # every ledger the session had already worked on.
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache = tmp_path / "orch-model-test-session.json"
     cache.write_text(json.dumps({"model": "fable"}), encoding="utf-8")
     started = time.time() - 3600          # session began an hour ago
     os.utime(cache, (started, started))
@@ -644,9 +644,9 @@ def test_stop_warms_every_session_sidecar(repo_dir, tmp_path):
     # had already had its one reminder.
     old = time.time() - 7200
     paths = []
-    for name, body in (("fable-orch-model-test-session.json", '{"started": 1.0}'),
-                       ("fable-orch-stop-test-session.json", '{"blocked": {}}'),
-                       ("fable-orch-tasks-test-session.json", '{"count": 2}')):
+    for name, body in (("orch-model-test-session.json", '{"started": 1.0}'),
+                       ("orch-stop-test-session.json", '{"blocked": {}}'),
+                       ("orch-tasks-test-session.json", '{"count": 2}')):
         p = tmp_path / name
         p.write_text(body, encoding="utf-8")
         os.utime(p, (old, old))
@@ -659,7 +659,7 @@ def test_stop_warms_every_session_sidecar(repo_dir, tmp_path):
 def test_stop_touches_the_session_marker(repo_dir, tmp_path):
     # Every Stop refreshes the marker's mtime so the 96h temp sweep can
     # never eat a LIVE session's files; `started` content is untouched.
-    cache = tmp_path / "fable-orch-model-test-session.json"
+    cache = tmp_path / "orch-model-test-session.json"
     cache.write_text(json.dumps({"started": 123.0}), encoding="utf-8")
     old = time.time() - 7200
     os.utime(cache, (old, old))

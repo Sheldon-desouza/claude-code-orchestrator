@@ -5,7 +5,7 @@ and sweep stale leftovers.
 Three duties, all best-effort (never fails the session):
 
   1. Delete this session's temp files (model cache + guard sidecars), then
-     sweep any fable-orch-*.json older than 96h — SessionEnd doesn't fire
+     sweep any orch-*.json older than 96h — SessionEnd doesn't fire
      for crashed sessions, so the files would otherwise accumulate.
   2. Reap this session's tmux teammates. The agent-teams backend parks
      teammates in tmux panes and does NOT reap them when the session
@@ -15,11 +15,11 @@ Three duties, all best-effort (never fails the session):
      versions used dedicated claude-swarm-* servers (killed whole, via
      the nearest-claude ancestor pid or the @session-<prefix> tag).
   3. Sweep swarm servers with no window activity for
-     FABLE_ORCH_SWARM_MAX_IDLE_H hours (default 48; 0 disables) —
+     ORCH_SWARM_MAX_IDLE_H hours (default 48; 0 disables) —
      catches teams orphaned by crashed sessions. Dead sockets are
      unlinked.
 
-FABLE_ORCH_SWARM_CLEANUP=0 disables duties 2 and 3 entirely.
+ORCH_SWARM_CLEANUP=0 disables duties 2 and 3 entirely.
 """
 import json
 import os
@@ -44,7 +44,7 @@ def _rotate_metrics():
     (replacing the previous .old), so the pair never exceeds ~10MB."""
     try:
         path = os.path.join(os.path.expanduser("~"), ".claude",
-                            "fable-orch", "metrics.jsonl")
+                            "orchestrator", "metrics.jsonl")
         if os.path.isfile(path) and os.path.getsize(path) > METRICS_MAX_BYTES:
             os.replace(path, path + ".old")
     except Exception:
@@ -59,11 +59,11 @@ def _tmp_json(prefix, session_id):
 
 
 def _metric(event, session_id=None, **extra):
-    """Append one event line to ~/.claude/fable-orch/metrics.jsonl (best effort)."""
-    if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
+    """Append one event line to ~/.claude/orchestrator/metrics.jsonl (best effort)."""
+    if (os.environ.get("ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.join(os.path.expanduser("~"), ".claude", "orchestrator")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:
@@ -296,7 +296,7 @@ def main():
         data = {}
 
     session_id = data.get("session_id")
-    for prefix in ("fable-orch-model", "fable-orch-stop", "fable-orch-tasks"):
+    for prefix in ("orch-model", "orch-stop", "orch-tasks"):
         path = _tmp_json(prefix, session_id)
         if path and os.path.isfile(path):
             try:
@@ -309,7 +309,7 @@ def main():
         tdir = tempfile.gettempdir()
         cutoff = time.time() - SWEEP_AGE_SECONDS
         for name in os.listdir(tdir):
-            if name.startswith("fable-orch-") and name.endswith(".json"):
+            if name.startswith("orch-") and name.endswith(".json"):
                 path = os.path.join(tdir, name)
                 try:
                     if os.path.getmtime(path) < cutoff:
@@ -320,9 +320,9 @@ def main():
         pass
 
     swarm_own = swarm_stale = 0
-    if (os.environ.get("FABLE_ORCH_SWARM_CLEANUP") or "").strip() != "0":
+    if (os.environ.get("ORCH_SWARM_CLEANUP") or "").strip() != "0":
         try:
-            max_idle_h = float(os.environ.get("FABLE_ORCH_SWARM_MAX_IDLE_H") or 48)
+            max_idle_h = float(os.environ.get("ORCH_SWARM_MAX_IDLE_H") or 48)
         except ValueError:
             max_idle_h = 48.0
         try:

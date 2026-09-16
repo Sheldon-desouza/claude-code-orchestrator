@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Summarize the fable-orchestrator metrics log.
+"""Summarize the orchestrator metrics log.
 
 Usage:
     python3 scripts/stats.py [path]
 
-Default path: ~/.claude/fable-orch/metrics.jsonl (written by the hooks;
-disable collection with FABLE_ORCH_METRICS=0).
+Default path: ~/.claude/orchestrator/metrics.jsonl (written by the hooks;
+disable collection with ORCH_METRICS=0).
 """
 import json
 import os
@@ -28,7 +28,7 @@ def records(path):
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
-        os.path.expanduser("~"), ".claude", "fable-orch", "metrics.jsonl")
+        os.path.expanduser("~"), ".claude", "orchestrator", "metrics.jsonl")
     if not os.path.isfile(path):
         print(f"no metrics yet: {path}")
         return

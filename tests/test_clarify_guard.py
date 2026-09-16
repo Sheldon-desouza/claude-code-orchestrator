@@ -690,13 +690,13 @@ def test_clarify_metrics_reach_the_stats_summary(repo_dir, tmp_path):
 
     home = tmp_path / "home"
     home.mkdir()
-    env = {"FABLE_ORCH_METRICS": "1", "HOME": str(home)}
+    env = {"ORCH_METRICS": "1", "HOME": str(home)}
     write_raw_ledger(repo_dir)
     run_hook(SCRIPT, spawn_payload(repo_dir), env_extra=env, tmpdir=tmp_path)
     for _ in range(3):
         run_hook(SCRIPT, task_payload(repo_dir), env_extra=env, tmpdir=tmp_path)
 
-    log = home / ".claude" / "fable-orch" / "metrics.jsonl"
+    log = home / ".claude" / "orchestrator" / "metrics.jsonl"
     events = [json.loads(line) for line in log.read_text().splitlines()]
     assert sum(1 for e in events if e["event"] == "clarify_deny") == 1
     assert sum(1 for e in events if e["event"] == "tasks_clarify_deny") == 1

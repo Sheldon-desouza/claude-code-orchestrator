@@ -12,14 +12,33 @@ def context_of(result):
     return result["hookSpecificOutput"]["additionalContext"]
 
 
-CORES = ("dynamic-workflow-fable.md", "dynamic-workflow-opus.md")
-SWITCHES = ("profile-switch-to-fable.md", "profile-switch-to-opus.md")
+import subprocess
+import sys
+
+# One template renders every chair from the tier map. "chair" is the
+# configured chair model in the chair; "fallback" is a cheaper tier
+# holding it while the chair tier's limit rests. The switch notes are
+# the short deltas sent on a mid-session tier change.
+CORES = ("chair", "fallback")
+SWITCHES = ("switch:chair", "switch:fallback")
 PLAYBOOK = ("skills", "playbook", "SKILL.md")
 CLARIFY = ("skills", "clarify", "SKILL.md")
+_FALLBACK_MODEL = "claude-opus-5"
 
 
 def _instr(name):
-    return (REPO / "instructions" / name).read_text(encoding="utf-8")
+    """Render a core or a switch note exactly as the injector would."""
+    switch = name.startswith("switch:")
+    profile = name.split(":", 1)[-1]
+    args = [sys.executable, str(REPO / "scripts" / "inject_instructions.py"),
+            "--render", profile]
+    if profile == "fallback":
+        args.append(_FALLBACK_MODEL)
+    if switch:
+        args.append("--switch")
+    return subprocess.run(args, capture_output=True, text=True, check=True,
+                          env={"PATH": "/usr/bin:/bin", "CLAUDE_PLUGIN_ROOT": str(REPO),
+                               "ORCH_CONFIG_DIR": "/nonexistent-orch-cfg"}).stdout
 
 
 def _playbook():
@@ -60,7 +79,9 @@ def test_cores_stay_on_the_token_diet():
     # 10k hook cap that made this a pin at all.
     for name in CORES:
         text = _instr(name)
-        assert len(text) < 5000, f"{name} is {len(text)} chars — over the 5k core diet"
+        # 5500: the class routing table (8 rows) now lives in the core so
+        # the route guard's deny text can point at it — ~400 chars.
+        assert len(text) < 5500, f"{name} is {len(text)} chars — over the 5.5k core diet"
 
 
 def test_switch_notes_stay_tiny():
@@ -69,7 +90,7 @@ def test_switch_notes_stay_tiny():
     # a second profile and the saving is gone.
     for name in SWITCHES:
         text = _instr(name)
-        assert len(text) < 600, f"{name} is {len(text)} chars — over the 600-char delta budget"
+        assert len(text) < 700, f"{name} is {len(text)} chars — over the 700-char delta budget"
 
 
 def test_playbook_skill_exists_and_stays_bounded():
@@ -79,7 +100,8 @@ def test_playbook_skill_exists_and_stays_bounded():
     path = REPO.joinpath(*PLAYBOOK)
     assert path.is_file(), f"missing playbook skill: {path}"
     text = path.read_text(encoding="utf-8")
-    assert len(text) < 5000, f"SKILL.md is {len(text)} chars — over the 5k budget"
+    # 7000: the playbook now carries the loop diagram and the class table.
+    assert len(text) < 7000, f"SKILL.md is {len(text)} chars — over the 7k budget"
     assert "name: playbook" in text  # the namespaced literal below depends on it
 
 
@@ -192,7 +214,9 @@ def test_preserved_decisions_survive_the_diet():
     # prose — a trim that drops one is a regression, not a diet.
     for name in CORES:
         text = _flat(_instr(name))
-        assert "no haiku" in text, f"{name}: haiku ban dropped"
+        # v1 fork: the upstream "no haiku" ban is reversed — haiku is the
+        # `cheap` tier for scan-class work, pinned by the route guard.
+        assert "cheap (" in text, f"{name}: cheap tier dropped from the routing table"
         assert "fork (≤2/session" in text, f"{name}: fork cap dropped"
         assert "EVERY close gets a FRESH" in text, f"{name}: fresh-eyes-every-close dropped"
         assert "./.workflow/LEDGER*.md" in text, f"{name}: ledger path dropped"
@@ -212,24 +236,40 @@ def test_injects_the_fable_profile(tmp_path):
         env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
         tmpdir=tmp_path,
     )
-    assert "(FABLE profile)" in context_of(result)
-    cache = tmp_path / "fable-orch-model-s-fable.json"
+    assert "CHAIR profile:" in context_of(result)
+    cache = tmp_path / "orch-model-s-fable.json"
     assert cache.is_file()
     data = json.loads(cache.read_text())
     assert data["model"] == "claude-fable-5"
     assert "started" in data
 
 
-def test_non_opus_models_get_the_fable_profile(tmp_path):
-    # Fable-first: everything that isn't an opus chair (sonnet chairs
-    # included) gets the primary profile.
+def test_any_non_chair_tier_gets_the_fallback_profile(tmp_path):
+    # With a tier map, ANY known tier that is not the chair tier is a
+    # fallback chair: a sonnet session is told the chair tier rests and
+    # that it holds the chair, exactly like an opus session.
+    for model in ("claude-sonnet-5", "claude-haiku-4-5-20251001"):
+        result = run_hook(
+            INJECT,
+            {"model": model, "session_id": "s-" + model[:12]},
+            env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
+            tmpdir=tmp_path,
+        )
+        text = context_of(result)
+        assert "FALLBACK profile:" in text, model
+        assert "fable rests" in text, model
+
+
+def test_unknown_model_gets_the_chair_profile(tmp_path):
+    # A brand-new model name the tier map has never heard of is more
+    # likely the top tier than not — it gets the full chair profile.
     result = run_hook(
         INJECT,
-        {"model": "claude-sonnet-5", "session_id": "s-sonnet"},
+        {"model": "claude-newthing-7", "session_id": "s-new"},
         env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
         tmpdir=tmp_path,
     )
-    assert "(FABLE profile)" in context_of(result)
+    assert "CHAIR profile:" in context_of(result)
 
 
 def test_opus_chair_gets_the_opus_fallback_profile(tmp_path):
@@ -243,8 +283,8 @@ def test_opus_chair_gets_the_opus_fallback_profile(tmp_path):
         tmpdir=tmp_path,
     )
     text = context_of(result)
-    assert "(OPUS profile)" in text
-    assert "(FABLE profile)" not in text
+    assert "FALLBACK profile:" in text
+    assert "CHAIR profile:" not in text
 
 
 def test_every_opus_generation_and_spelling_detects(tmp_path):
@@ -261,7 +301,7 @@ def test_every_opus_generation_and_spelling_detects(tmp_path):
             env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
             tmpdir=tmp_path,
         )
-        assert "(OPUS profile)" in context_of(result), model
+        assert "FALLBACK profile:" in context_of(result), model
 
 
 def test_opus_lookalike_models_are_not_opus(tmp_path):
@@ -274,7 +314,7 @@ def test_opus_lookalike_models_are_not_opus(tmp_path):
             env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
             tmpdir=tmp_path,
         )
-        assert "(FABLE profile)" in context_of(result), model
+        assert "CHAIR profile:" in context_of(result), model
 
 
 def test_profiles_name_no_dated_opus_id():
@@ -327,12 +367,12 @@ def test_null_payload_falls_back_to_settings_opus(tmp_path):
     # configured default (/model wrote "opus[1m]" to settings.json) must
     # still select the OPUS profile instead of defaulting to fable.
     _write_settings(tmp_path, "opus[1m]")
-    assert "(OPUS profile)" in context_of(_inject(tmp_path, {"session_id": "s1"}))
+    assert "FALLBACK profile:" in context_of(_inject(tmp_path, {"session_id": "s1"}))
 
 
 def test_null_payload_falls_back_to_settings_fable(tmp_path):
     _write_settings(tmp_path, "claude-fable-5")
-    assert "(FABLE profile)" in context_of(_inject(tmp_path, {"session_id": "s2"}))
+    assert "CHAIR profile:" in context_of(_inject(tmp_path, {"session_id": "s2"}))
 
 
 def test_payload_model_beats_settings(tmp_path):
@@ -340,25 +380,34 @@ def test_payload_model_beats_settings(tmp_path):
     # fallback for when the payload omits the model.
     _write_settings(tmp_path, "claude-fable-5")
     r = _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s3"})
-    assert "(OPUS profile)" in context_of(r)
+    assert "FALLBACK profile:" in context_of(r)
 
 
 def test_env_override_opus_beats_fable_payload(tmp_path):
     r = _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s4"},
-                FABLE_ORCH_PROFILE="opus")
-    assert "(OPUS profile)" in context_of(r)
+                ORCH_PROFILE="opus")
+    assert "FALLBACK profile:" in context_of(r)
 
 
 def test_env_override_fable_beats_opus_payload(tmp_path):
     r = _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s5"},
-                FABLE_ORCH_PROFILE="fable")
-    assert "(FABLE profile)" in context_of(r)
+                ORCH_PROFILE="fable")
+    assert "CHAIR profile:" in context_of(r)
+
+
+def test_env_override_accepts_profile_names(tmp_path):
+    r = _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s4b"},
+                ORCH_PROFILE="fallback")
+    assert "FALLBACK profile:" in context_of(r)
+    r = _inject(tmp_path, {"model": "claude-opus-5", "session_id": "s5b"},
+                ORCH_PROFILE="chair")
+    assert "CHAIR profile:" in context_of(r)
 
 
 def test_env_override_auto_falls_through_to_detection(tmp_path):
     r = _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s6"},
-                FABLE_ORCH_PROFILE="auto")
-    assert "(OPUS profile)" in context_of(r)
+                ORCH_PROFILE="auto")
+    assert "FALLBACK profile:" in context_of(r)
 
 
 def test_marker_keeps_opus_sticky_on_null_payload(tmp_path):
@@ -366,9 +415,9 @@ def test_marker_keeps_opus_sticky_on_null_payload(tmp_path):
     # resume (no settings) must stay opus, not regress to fable, and must
     # not overwrite the remembered model with null.
     _inject(tmp_path, {"model": "claude-opus-4-8", "session_id": "s7"})
-    marker = tmp_path / "fable-orch-model-s7.json"
+    marker = tmp_path / "orch-model-s7.json"
     assert json.loads(marker.read_text())["model"] == "claude-opus-4-8"
-    assert "(OPUS profile)" in context_of(_inject(tmp_path, {"session_id": "s7"}))
+    assert "FALLBACK profile:" in context_of(_inject(tmp_path, {"session_id": "s7"}))
     assert json.loads(marker.read_text())["model"] == "claude-opus-4-8"
 
 
@@ -376,16 +425,16 @@ def test_inject_metric_records_detection_source(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     _write_settings(tmp_path, "opus[1m]")
-    _inject(tmp_path, {"session_id": "s8"}, HOME=str(home), FABLE_ORCH_METRICS="1")
-    rec = json.loads((home / ".claude" / "fable-orch" / "metrics.jsonl")
+    _inject(tmp_path, {"session_id": "s8"}, HOME=str(home), ORCH_METRICS="1")
+    rec = json.loads((home / ".claude" / "orchestrator" / "metrics.jsonl")
                      .read_text().splitlines()[0])
-    assert rec["profile"] == "opus" and rec["source"] == "settings"
+    assert rec["profile"] == "fallback" and rec["source"] == "settings"
 
 
 # --- profile-switch delta: same session, the chair changed tiers ---
 
 def _marker(tmp_path, sid):
-    return json.loads((tmp_path / f"fable-orch-model-{sid}.json")
+    return json.loads((tmp_path / f"orch-model-{sid}.json")
                       .read_text(encoding="utf-8"))
 
 
@@ -393,42 +442,42 @@ def test_fable_to_opus_switch_on_resume_injects_only_the_delta(tmp_path):
     # The Fable limit ran dry mid-session and the user moved the chair to
     # Opus. On a RESUME the core is provably still in this session's
     # context; re-sending it spends the very limit the switch preserves.
-    assert "(FABLE profile)" in context_of(
+    assert "CHAIR profile:" in context_of(
         _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s-sw1"}))
-    assert _marker(tmp_path, "s-sw1")["profile"] == "fable"
+    assert _marker(tmp_path, "s-sw1")["profile"] == "chair"
 
     text = context_of(_inject(tmp_path, {"model": "claude-opus-5",
                                          "session_id": "s-sw1",
                                          "source": "resume"}))
-    assert "Profile switch → OPUS chair" in text
-    assert "(OPUS profile)" not in text   # the full core is NOT re-sent
+    assert "Profile switch → FALLBACK:" in text
+    assert "FALLBACK profile:" not in text   # the full core is NOT re-sent
     assert len(text) < 600
-    assert _marker(tmp_path, "s-sw1")["profile"] == "opus"
+    assert _marker(tmp_path, "s-sw1")["profile"] == "fallback"
 
 
 def test_opus_to_fable_switch_on_resume_injects_only_the_delta(tmp_path):
     # The limit reset and the chair moved back.
-    assert "(OPUS profile)" in context_of(
+    assert "FALLBACK profile:" in context_of(
         _inject(tmp_path, {"model": "claude-opus-5", "session_id": "s-sw2"}))
     text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
                                          "session_id": "s-sw2",
                                          "source": "resume"}))
-    assert "Profile switch → FABLE chair" in text
-    assert "(FABLE profile)" not in text
-    assert _marker(tmp_path, "s-sw2")["profile"] == "fable"
+    assert "Profile switch → CHAIR:" in text
+    assert "CHAIR profile:" not in text
+    assert _marker(tmp_path, "s-sw2")["profile"] == "chair"
 
 
 def test_switching_back_and_forth_on_resume_keeps_delivering_deltas(tmp_path):
     # fable -> opus -> fable inside one session: each hop is a delta, and
     # the marker tracks the CURRENT profile, never the original.
     _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s-sw3"})
-    assert "Profile switch → OPUS" in context_of(
+    assert "Profile switch → FALLBACK" in context_of(
         _inject(tmp_path, {"model": "claude-opus-5", "session_id": "s-sw3",
                            "source": "resume"}))
-    assert "Profile switch → FABLE" in context_of(
+    assert "Profile switch → CHAIR" in context_of(
         _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s-sw3",
                            "source": "resume"}))
-    assert _marker(tmp_path, "s-sw3")["profile"] == "fable"
+    assert _marker(tmp_path, "s-sw3")["profile"] == "chair"
 
 
 def test_switch_on_a_context_losing_fire_gets_the_full_core(tmp_path):
@@ -440,14 +489,14 @@ def test_switch_on_a_context_losing_fire_gets_the_full_core(tmp_path):
     # and the marker still tracks the new chair.
     for i, fire in enumerate(("compact", "clear", "startup")):
         sid = f"s-fire{i}"
-        assert "(FABLE profile)" in context_of(
+        assert "CHAIR profile:" in context_of(
             _inject(tmp_path, {"model": "claude-fable-5", "session_id": sid}))
         text = context_of(_inject(tmp_path, {"model": "claude-opus-5",
                                              "session_id": sid,
                                              "source": fire}))
-        assert "(OPUS profile)" in text, fire     # the FULL core
+        assert "FALLBACK profile:" in text, fire     # the FULL core
         assert "Profile switch" not in text, fire
-        assert _marker(tmp_path, sid)["profile"] == "opus", fire
+        assert _marker(tmp_path, sid)["profile"] == "fallback", fire
 
 
 def test_unknown_source_takes_the_safe_side(tmp_path):
@@ -460,7 +509,7 @@ def test_unknown_source_takes_the_safe_side(tmp_path):
         payload = {"model": "claude-opus-5", "session_id": sid}
         payload.update(payload_extra)
         text = context_of(_inject(tmp_path, payload))
-        assert "(OPUS profile)" in text, payload_extra
+        assert "FALLBACK profile:" in text, payload_extra
         assert "Profile switch" not in text, payload_extra
 
 
@@ -473,9 +522,9 @@ def test_same_profile_refire_still_gets_the_full_core(tmp_path):
         if fire:
             payload["source"] = fire
         text = context_of(_inject(tmp_path, payload))
-        assert "(FABLE profile)" in text, fire
+        assert "CHAIR profile:" in text, fire
         assert "Profile switch" not in text, fire
-    assert _marker(tmp_path, "s-same")["profile"] == "fable"
+    assert _marker(tmp_path, "s-same")["profile"] == "chair"
 
 
 def test_legacy_marker_without_profile_never_gets_a_bare_delta(tmp_path):
@@ -483,7 +532,7 @@ def test_legacy_marker_without_profile_never_gets_a_bare_delta(tmp_path):
     # this session may never have seen would strip the chair of every
     # orchestration rule silently — so an unrecorded profile means the
     # FULL core, even though the model plainly changed tier.
-    cache = tmp_path / "fable-orch-model-s-legacy-p.json"
+    cache = tmp_path / "orch-model-s-legacy-p.json"
     cache.write_text(json.dumps({"model": "claude-fable-5", "started": 123.0}),
                      encoding="utf-8")
     # `source: resume` so the SOURCE gate is satisfied and the missing
@@ -491,23 +540,23 @@ def test_legacy_marker_without_profile_never_gets_a_bare_delta(tmp_path):
     text = context_of(_inject(tmp_path, {"model": "claude-opus-5",
                                          "session_id": "s-legacy-p",
                                          "source": "resume"}))
-    assert "(OPUS profile)" in text
+    assert "FALLBACK profile:" in text
     assert "Profile switch" not in text
 
 
 def test_switch_metric_is_distinguishable(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    env = {"HOME": str(home), "FABLE_ORCH_METRICS": "1"}
+    env = {"HOME": str(home), "ORCH_METRICS": "1"}
     _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s-sw-m"}, **env)
     _inject(tmp_path, {"model": "claude-opus-5", "session_id": "s-sw-m",
                        "source": "resume"}, **env)
-    lines = (home / ".claude" / "fable-orch" / "metrics.jsonl").read_text(
+    lines = (home / ".claude" / "orchestrator" / "metrics.jsonl").read_text(
         encoding="utf-8").strip().splitlines()
     assert json.loads(lines[0])["event"] == "inject"      # unchanged
     rec = json.loads(lines[1])
     assert rec["event"] == "inject_switch"                # its own event
-    assert rec["profile"] == "opus" and rec["from_profile"] == "fable"
+    assert rec["profile"] == "fallback" and rec["from_profile"] == "chair"
     # `fire` survives the gate: it is how we learn which sources real
     # fallback re-fires actually arrive on, before widening the gate.
     assert rec["fire"] == "resume"
@@ -519,11 +568,11 @@ def test_gated_full_core_is_not_counted_as_a_switch(tmp_path):
     # the data used to widen the gate would be self-confirming.
     home = tmp_path / "home"
     home.mkdir()
-    env = {"HOME": str(home), "FABLE_ORCH_METRICS": "1"}
+    env = {"HOME": str(home), "ORCH_METRICS": "1"}
     _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s-sw-g"}, **env)
     _inject(tmp_path, {"model": "claude-opus-5", "session_id": "s-sw-g",
                        "source": "compact"}, **env)
-    lines = (home / ".claude" / "fable-orch" / "metrics.jsonl").read_text(
+    lines = (home / ".claude" / "orchestrator" / "metrics.jsonl").read_text(
         encoding="utf-8").strip().splitlines()
     assert [json.loads(l)["event"] for l in lines] == ["inject", "inject"]
 
@@ -532,9 +581,9 @@ def test_teammate_is_skipped_even_when_the_profile_switched(tmp_path):
     # A teammate never received a core, so it can never receive a delta —
     # and its marker must not claim an injection that did not happen, or
     # the chair's next fire would be handed a delta with no core under it.
-    cache = tmp_path / "fable-orch-model-s-tm-sw.json"
+    cache = tmp_path / "orch-model-s-tm-sw.json"
     cache.write_text(json.dumps({"model": "claude-fable-5", "started": 123.0,
-                                 "profile": "fable"}), encoding="utf-8")
+                                 "profile": "chair"}), encoding="utf-8")
     env = _fake_ps_env(
         tmp_path, "1 claude --agent-id worker@session-t --agent-name worker")
     assert run_hook(INJECT, {"model": "claude-opus-5", "session_id": "s-tm-sw",
@@ -542,7 +591,7 @@ def test_teammate_is_skipped_even_when_the_profile_switched(tmp_path):
                     env_extra=env, tmpdir=tmp_path) is None
     data = json.loads(cache.read_text(encoding="utf-8"))
     assert data["model"] == "claude-opus-5"   # marker still tracks the model
-    assert data["profile"] == "fable"         # but NOT a phantom injection
+    assert data["profile"] == "chair"         # but NOT a phantom injection
 
 
 def test_missing_model_still_injects(tmp_path):
@@ -552,8 +601,8 @@ def test_missing_model_still_injects(tmp_path):
         env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
         tmpdir=tmp_path,
     )
-    assert "(FABLE profile)" in context_of(result)
-    cache = tmp_path / "fable-orch-model-s-nomodel.json"
+    assert "CHAIR profile:" in context_of(result)
+    cache = tmp_path / "orch-model-s-nomodel.json"
     assert "started" in json.loads(cache.read_text())
 
 
@@ -564,7 +613,7 @@ def test_plugin_root_fallback_to_script_location(tmp_path):
         {"model": "claude-fable-5", "session_id": "s-fallback"},
         tmpdir=tmp_path,
     )
-    assert "(FABLE profile)" in context_of(result)
+    assert "CHAIR profile:" in context_of(result)
 
 
 def test_metrics_written_when_enabled(tmp_path):
@@ -576,16 +625,16 @@ def test_metrics_written_when_enabled(tmp_path):
         env_extra={
             "CLAUDE_PLUGIN_ROOT": str(REPO),
             "HOME": str(home),
-            "FABLE_ORCH_METRICS": "1",
+            "ORCH_METRICS": "1",
         },
         tmpdir=tmp_path,
     )
-    log = home / ".claude" / "fable-orch" / "metrics.jsonl"
+    log = home / ".claude" / "orchestrator" / "metrics.jsonl"
     assert log.is_file()
     rec = json.loads(log.read_text(encoding="utf-8").strip().splitlines()[0])
     assert rec["event"] == "inject"
     assert rec["model"] == "claude-fable-5"
-    assert rec["profile"] == "fable"
+    assert rec["profile"] == "chair"
 
 
 def test_stats_reads_the_switch_event_without_crashing(tmp_path):
@@ -621,18 +670,18 @@ def test_metrics_optout(tmp_path):
         env_extra={
             "CLAUDE_PLUGIN_ROOT": str(REPO),
             "HOME": str(home),
-            "FABLE_ORCH_METRICS": "0",
+            "ORCH_METRICS": "0",
         },
         tmpdir=tmp_path,
     )
-    assert not (home / ".claude" / "fable-orch" / "metrics.jsonl").exists()
+    assert not (home / ".claude" / "orchestrator" / "metrics.jsonl").exists()
 
 
 def test_inject_preserves_started_across_reruns(tmp_path):
     env = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
     run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-started"},
              env_extra=env, tmpdir=tmp_path)
-    cache = tmp_path / "fable-orch-model-s-started.json"
+    cache = tmp_path / "orch-model-s-started.json"
     data = json.loads(cache.read_text(encoding="utf-8"))
     assert "started" in data
     data["started"] = 123.0  # pretend the session started long ago
@@ -668,7 +717,7 @@ def test_teammate_session_gets_no_profile(tmp_path):
                       env_extra=env, tmpdir=tmp_path)
     assert result is None
     # The marker is still written: stop, spawn, and cleanup key off it.
-    cache = tmp_path / "fable-orch-model-s-tm.json"
+    cache = tmp_path / "orch-model-s-tm.json"
     assert cache.is_file()
     assert json.loads(cache.read_text(encoding="utf-8"))["model"] == "claude-sonnet-5"
 
@@ -677,27 +726,28 @@ def test_teammate_skip_records_metric(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     env = _fake_ps_env(tmp_path, "1 claude --agent-id w@s --agent-name w")
-    env.update({"HOME": str(home), "FABLE_ORCH_METRICS": "1"})
+    env.update({"HOME": str(home), "ORCH_METRICS": "1"})
     run_hook(INJECT, {"model": "claude-sonnet-5", "session_id": "s-tm-m"},
              env_extra=env, tmpdir=tmp_path)
-    log = home / ".claude" / "fable-orch" / "metrics.jsonl"
+    log = home / ".claude" / "orchestrator" / "metrics.jsonl"
     rec = json.loads(log.read_text(encoding="utf-8").strip().splitlines()[0])
     assert rec["event"] == "inject_skipped"
     assert rec["reason"] == "teammate"
     # Resolution ran before the skip: the record still says which
-    # profile the worker WOULD have received.
-    assert rec["profile"] == "fable"
+    # profile the worker WOULD have received (a sonnet session is a
+    # fallback chair under the tier map).
+    assert rec["profile"] == "fallback"
     assert rec["source"] == "payload"
 
 
 def test_teammate_inject_escape_hatch(tmp_path):
-    # FABLE_ORCH_TEAMMATE_INJECT=1 restores the old inject-everyone
-    # behaviour, mirroring FABLE_ORCH_TEAMMATE_STOP on the close guard.
+    # ORCH_TEAMMATE_INJECT=1 restores the old inject-everyone
+    # behaviour, mirroring ORCH_TEAMMATE_STOP on the close guard.
     env = _fake_ps_env(tmp_path, "1 claude --agent-id w@s --agent-name w")
-    env["FABLE_ORCH_TEAMMATE_INJECT"] = "1"
+    env["ORCH_TEAMMATE_INJECT"] = "1"
     result = run_hook(INJECT, {"model": "claude-sonnet-5", "session_id": "s-tm-e"},
                       env_extra=env, tmpdir=tmp_path)
-    assert "(FABLE profile)" in context_of(result)
+    assert "FALLBACK profile:" in context_of(result)   # sonnet = fallback chair
 
 
 def test_chair_still_injected_when_ancestor_is_plain_claude(tmp_path):
@@ -706,25 +756,25 @@ def test_chair_still_injected_when_ancestor_is_plain_claude(tmp_path):
     env = _fake_ps_env(tmp_path, "1 claude")
     result = run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-chair"},
                       env_extra=env, tmpdir=tmp_path)
-    assert "(FABLE profile)" in context_of(result)
+    assert "CHAIR profile:" in context_of(result)
 
 
 def test_metrics_rotation_caps_the_log(tmp_path):
     home = tmp_path / "home"
-    d = home / ".claude" / "fable-orch"
+    d = home / ".claude" / "orchestrator"
     d.mkdir(parents=True)
     log = d / "metrics.jsonl"
     log.write_bytes(b"x" * (5 * 1024 * 1024 + 1))
     run_hook(CLEANUP, {"session_id": "s-rot"},
-             env_extra={"HOME": str(home), "FABLE_ORCH_METRICS": "1"},
+             env_extra={"HOME": str(home), "ORCH_METRICS": "1"},
              tmpdir=tmp_path)
     assert (d / "metrics.jsonl.old").is_file()
     assert log.is_file() and b"cleanup" in log.read_bytes()
 
 
 def test_cleanup_removes_cache(tmp_path):
-    cache = tmp_path / "fable-orch-model-s-clean.json"
-    cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")
+    cache = tmp_path / "orch-model-s-clean.json"
+    cache.write_text(json.dumps({"profile": "chair"}), encoding="utf-8")
     assert run_hook(CLEANUP, {"session_id": "s-clean"}, tmpdir=tmp_path) is None
     assert not cache.exists()
 
@@ -733,17 +783,17 @@ def test_cleanup_removes_stop_sidecar_and_sweeps_old(tmp_path):
     import os
     import time
 
-    cache = tmp_path / "fable-orch-model-s-clean.json"
+    cache = tmp_path / "orch-model-s-clean.json"
     cache.write_text("{}", encoding="utf-8")
-    sidecar = tmp_path / "fable-orch-stop-s-clean.json"
+    sidecar = tmp_path / "orch-stop-s-clean.json"
     sidecar.write_text("{}", encoding="utf-8")
-    tasks = tmp_path / "fable-orch-tasks-s-clean.json"
+    tasks = tmp_path / "orch-tasks-s-clean.json"
     tasks.write_text('{"count": 2}', encoding="utf-8")
-    stale = tmp_path / "fable-orch-model-dead-session.json"
+    stale = tmp_path / "orch-model-dead-session.json"
     stale.write_text("{}", encoding="utf-8")
     old = time.time() - 120 * 3600  # past the 96h sweep window
     os.utime(stale, (old, old))
-    fresh = tmp_path / "fable-orch-model-alive.json"
+    fresh = tmp_path / "orch-model-alive.json"
     fresh.write_text("{}", encoding="utf-8")
 
     assert run_hook(CLEANUP, {"session_id": "s-clean"}, tmpdir=tmp_path) is None
@@ -820,7 +870,7 @@ def _swarm_fixture(tmp_path):
     env = {
         "PATH": f"{bin_dir}:{_os.environ.get('PATH', '')}",
         "TMUX_TMPDIR": str(swarm_root),
-        "FABLE_ORCH_SWARM_CLEANUP": "1",
+        "ORCH_SWARM_CLEANUP": "1",
         "FAKE_KILL_LOG": str(kill_log),
         "FAKE_PS_LOG": str(tmp_path / "ps.log"),
     }
@@ -884,7 +934,7 @@ def test_swarm_idle_sweep_disabled_by_zero(tmp_path):
     import time
 
     env, kill_log = _swarm_fixture(tmp_path)
-    env["FABLE_ORCH_SWARM_MAX_IDLE_H"] = "0"
+    env["ORCH_SWARM_MAX_IDLE_H"] = "0"
     env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-deadbeef --agent-name w"
     env["FAKE_WINDOW_ACTIVITY"] = "1000"  # ancient, but the sweep is off
     assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
@@ -899,8 +949,8 @@ def test_inject_started_falls_back_to_mtime_for_legacy_cache(tmp_path):
     import os
     import time
 
-    cache = tmp_path / "fable-orch-model-s-legacy.json"
-    cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")
+    cache = tmp_path / "orch-model-s-legacy.json"
+    cache.write_text(json.dumps({"profile": "chair"}), encoding="utf-8")
     old = time.time() - 7200
     os.utime(cache, (old, old))
     run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-legacy"},
@@ -911,7 +961,7 @@ def test_inject_started_falls_back_to_mtime_for_legacy_cache(tmp_path):
 
 def test_swarm_cleanup_optout(tmp_path):
     env, kill_log = _swarm_fixture(tmp_path)
-    env["FABLE_ORCH_SWARM_CLEANUP"] = "0"
+    env["ORCH_SWARM_CLEANUP"] = "0"
     env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-s-swarm- --agent-name worker"
     env["FAKE_WINDOW_ACTIVITY"] = "1000"
     assert run_hook(CLEANUP, {"session_id": "s-swarm-123"}, env_extra=env, tmpdir=tmp_path) is None
@@ -941,7 +991,7 @@ def test_non_object_stdin_never_crashes(tmp_path):
     result = run_hook(INJECT, raw="[1, 2]",
                       env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)},
                       tmpdir=tmp_path)
-    assert "(FABLE profile)" in context_of(result)  # still injects
+    assert "CHAIR profile:" in context_of(result)  # still injects
 
 
 def test_nested_claude_does_not_kill_outer_swarm(tmp_path):

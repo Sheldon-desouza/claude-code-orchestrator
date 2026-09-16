@@ -1,0 +1,22 @@
+Claude Code Orchestrator
+Copyright (c) 2026 Sheldon de Souza
+
+This project is a fork of, and builds on, "fable5-opus5-orchestrator"
+by Yusuf Demirkoparan (https://github.com/Rylaa/fable5-opus5-orchestrator),
+licensed under the MIT License. The fork point is upstream v0.23.0
+(commit 1a503b9, 2026-09-07), the last release that shipped tier
+routing, the playbook and the fresh-eyes verifier; upstream later
+narrowed itself to a clarify-only plugin (v0.24–0.25), and this
+project continues the full orchestration design instead.
+
+Retained from upstream, largely verbatim: the clarify gate and its
+markdown parser, the ledger gates, the Stop-hook cadence and
+ownership logic, the session markers, tmux teammate reaping, the
+SessionStart profile-switch delta logic, and the test harness.
+
+Added in this project: the tier map and routing table (config/), the
+route guard, the verify valve, seven tiered agent definitions, six
+slash commands, the standalone skill, the doctor, and their tests.
+
+The full git history of the upstream work is preserved in this
+repository so that authorship is visible commit by commit.

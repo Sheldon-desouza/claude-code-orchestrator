@@ -12,7 +12,7 @@ detected per session start and the matching profile injected:
 
 Detection, in priority order (first hit wins):
 
-    1. FABLE_ORCH_PROFILE = fable | opus   — explicit pin, overrides all
+    1. ORCH_PROFILE = fable | opus   — explicit pin, overrides all
        (auto / unset falls through to detection)
     2. the SessionStart payload's `model`  — authoritative for THIS
        session start, but the harness omits it on some resume/compact
@@ -62,7 +62,7 @@ the very discipline the plugin enforces (measured in the wild: 172 of
 270 injected sessions were teammates). Detection is the same ancestor
 walk the stop guard uses (`--agent-id` on the nearest claude ancestor);
 the session marker is still written so the other guards keep working.
-FABLE_ORCH_TEAMMATE_INJECT=1 restores the old inject-everyone
+ORCH_TEAMMATE_INJECT=1 restores the old inject-everyone
 behaviour.
 
 The hook also maintains the per-session marker the Stop and SessionEnd
@@ -78,21 +78,24 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tiers import load_tiers, tier_of  # noqa: E402
+
 
 def session_model_cache_path(session_id):
     """Per-session marker file the stop/cleanup hooks read. None if no id."""
     if not session_id:
         return None
     safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
-    return os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+    return os.path.join(tempfile.gettempdir(), f"orch-model-{safe}.json")
 
 
 def _metric(event, session_id=None, **extra):
-    """Append one event line to ~/.claude/fable-orch/metrics.jsonl (best effort)."""
-    if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
+    """Append one event line to ~/.claude/orchestrator/metrics.jsonl (best effort)."""
+    if (os.environ.get("ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.join(os.path.expanduser("~"), ".claude", "orchestrator")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:
@@ -104,17 +107,66 @@ def _metric(event, session_id=None, **extra):
         pass
 
 
-def _is_opus(value):
-    """True when the model string names the opus tier.
+PROFILES = ("chair", "fallback")
 
-    Bounded, not a bare substring: `claude-octopus-1` and `opusculum`
-    contain "opus" but are not Opus chairs. The bound stays permissive
-    on the right so a version can follow with or without a separator —
-    `claude-opus-5`, `opus5`, `opus[1m]`, `Opus 5 (1M context)` all
-    match; only a letter immediately after "opus" disqualifies it.
+
+def _profile_for(model, tiers=None):
+    """'chair' when the model is the configured chair tier or unknown
+    (a brand-new model name is more likely the top tier than not, and
+    the safe side hands it the full profile); 'fallback' when it
+    resolves to any OTHER tier — the chair tier's limit is spent and a
+    cheaper model holds the chair, so the profile must tell it not to
+    spawn the resting tier."""
+    t = tier_of(model, tiers or load_tiers())
+    return "chair" if t in (None, "chair") else "fallback"
+
+
+def render_profile(profile, model=None, switch=False, tiers=None, root=None):
+    """The chair text for `profile`, rendered from the tier map.
+
+    One template serves every chair: the tier map supplies the model
+    names, so a new model is a one-line config change, not a release.
+    `switch=True` renders the short delta note instead of the full
+    core (see the PROFILE-SWITCH DELTA note in the module docstring).
     """
-    return re.search(r"\bopus(?![a-z])", str(value or ""),
-                     re.IGNORECASE) is not None
+    tiers = tiers or load_tiers()
+    root = root or os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))
+    name = "profile-switch.md.tmpl" if switch else "profile.md.tmpl"
+    with open(os.path.join(root, "instructions", name), encoding="utf-8") as f:
+        text = f.read()
+    chair = tiers["chair"]["model"]
+    heavy = tiers["heavy"]["model"]
+    held_by = tier_of(model, tiers) if model else None
+    if profile == "fallback":
+        holder = tiers.get(held_by, {}).get("model", str(model or "fallback"))
+        fields = {
+            "PROFILE_LABEL": f"FALLBACK profile: {holder} holds the chair, {chair} rests",
+            "PROFILE_NOTE": (f"The {chair} limit is spent; {holder} holds the chair until "
+                             f"it returns. Do NOT spawn {chair}-tier agents — they burn "
+                             f"the exhausted limit. {heavy} is the escalation ceiling "
+                             f"and every verifier. The usage limit still wins over "
+                             f"context hygiene."),
+            "CHAIR": holder,
+            "ROUTING_NOTE": (f"\nThe chair tier ({chair}) is RESTING: never spawn it; its "
+                             f"roles fall to heavy ({heavy})."),
+        }
+    else:
+        fields = {
+            "PROFILE_LABEL": f"CHAIR profile: {chair} in the chair",
+            "PROFILE_NOTE": (f"{chair}-in-chair, token-frugal: the scarce resource is the "
+                             f"USAGE LIMIT. When the limit and context hygiene conflict, "
+                             f"the limit wins. {heavy} spares the {chair} limit wherever it "
+                             f"can; {chair} is the escalation ceiling."),
+            "CHAIR": chair,
+            "ROUTING_NOTE": "",
+        }
+    fields["PROFILE_NAME"] = "FALLBACK" if profile == "fallback" else "CHAIR"
+    fields.update({"HEAVY": heavy, "BULK": tiers["bulk"]["model"],
+                   "CHEAP": tiers["cheap"]["model"]})
+    for key, val in fields.items():
+        text = text.replace("{{" + key + "}}", val)
+    return text
 
 
 def _configured_model():
@@ -210,18 +262,26 @@ def _is_teammate_session(max_hops=12):
 
 
 def resolve_profile(payload_model, configured_model, marker_model):
-    """Return (profile, source) — 'opus'|'fable' and which signal decided.
-    Priority: env override > payload model > settings default > marker."""
-    override = (os.environ.get("FABLE_ORCH_PROFILE") or "").strip().lower()
-    if override in ("fable", "opus"):
-        return override, "override"
+    """Return (profile, source, model) — 'chair'|'fallback', which signal
+    decided, and the model string it decided from.
+    Priority: env override > payload model > settings default > marker.
+    ORCH_PROFILE accepts a profile name (`chair`/`fallback`) or any model
+    or tier name the tier map resolves (`opus`, `fable`, `claude-opus-5`);
+    `auto`/unset falls through to detection."""
+    tiers = load_tiers()
+    override = (os.environ.get("ORCH_PROFILE") or "").strip().lower()
+    if override in PROFILES:
+        model = payload_model or configured_model or marker_model
+        return override, "override", model
+    if override and override != "auto" and tier_of(override, tiers):
+        return _profile_for(override, tiers), "override", override
     if str(payload_model or "").strip():
-        return ("opus" if _is_opus(payload_model) else "fable"), "payload"
+        return _profile_for(payload_model, tiers), "payload", payload_model
     if str(configured_model or "").strip():
-        return ("opus" if _is_opus(configured_model) else "fable"), "settings"
+        return _profile_for(configured_model, tiers), "settings", configured_model
     if str(marker_model or "").strip():
-        return ("opus" if _is_opus(marker_model) else "fable"), "marker"
-    return "fable", "default"
+        return _profile_for(marker_model, tiers), "marker", marker_model
+    return "chair", "default", None
 
 
 def main():
@@ -238,7 +298,7 @@ def main():
     cache = session_model_cache_path(session_id)
     prev_started, prev_model, prev_profile = _read_marker(cache)
 
-    profile, source = resolve_profile(model, _configured_model(), prev_model)
+    profile, source, decided_from = resolve_profile(model, _configured_model(), prev_model)
 
     # Profile-switch delta: this session already carries a core profile
     # and the chair has since moved to the other tier. Re-sending ~3.7k
@@ -255,26 +315,19 @@ def main():
     # chair; wrong-full-core costs ~3.7k chars.
     switched = (bool(prev_profile) and prev_profile != profile
                 and fire == "resume")
-    filename = (f"profile-switch-to-{profile}.md" if switched
-                else f"dynamic-workflow-{profile}.md")
 
     # The profile is chair-only; a teammate session skips the injection
     # but still gets its marker below — stop, spawn, and cleanup key off
     # it. Resolution ran first so the skip metric records which profile
     # the worker WOULD have received.
     teammate = False
-    if (os.environ.get("FABLE_ORCH_TEAMMATE_INJECT") or "").strip() != "1":
+    if (os.environ.get("ORCH_TEAMMATE_INJECT") or "").strip() != "1":
         teammate = _is_teammate_session()
 
     text = None
     if not teammate:
-        root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
-        )
-        path = os.path.join(root, "instructions", filename)
         try:
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
+            text = render_profile(profile, model=decided_from, switch=switched)
         except Exception:
             return  # never break session start
 
@@ -306,7 +359,7 @@ def main():
             # that never happened.
             stored_profile = prev_profile if teammate else profile
             # Atomic replace: a crash mid-write must never leave a
-            # truncated marker. The tmp name keeps the fable-orch-*.json
+            # truncated marker. The tmp name keeps the orch-*.json
             # shape so an orphan from a crash still matches the 96h sweep.
             tmp = f"{cache}.{os.getpid()}.tmp.json"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -343,4 +396,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) >= 3 and sys.argv[1] == "--render":
+        # `--render chair|fallback [model] [--switch]`: print the text a
+        # session would receive, without touching any marker.
+        which = sys.argv[2]
+        rest = [a for a in sys.argv[3:] if a != "--switch"]
+        print(render_profile(which, model=(rest[0] if rest else None),
+                             switch="--switch" in sys.argv[3:]), end="")
+    else:
+        main()

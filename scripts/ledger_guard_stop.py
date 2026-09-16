@@ -25,7 +25,7 @@ never hold unrelated sessions.
 Piggybacked duty: because this hook fires at every turn end of every
 session, it also runs the rate-limited teammate-pane sweep (see
 reap_idle_teammates) — finished teammates die within roughly
-FABLE_ORCH_TEAMMATE_IDLE_H hours instead of waiting for a SessionEnd
+ORCH_TEAMMATE_IDLE_H hours instead of waiting for a SessionEnd
 that may be days away.
 """
 import json
@@ -45,19 +45,19 @@ def _tmp_json(prefix, session_id):
 
 
 def session_model_cache_path(session_id):
-    return _tmp_json("fable-orch-model", session_id)
+    return _tmp_json("orch-model", session_id)
 
 
 def stop_sidecar_path(session_id):
-    return _tmp_json("fable-orch-stop", session_id)
+    return _tmp_json("orch-stop", session_id)
 
 
 def _metric(event, session_id=None, **extra):
-    """Append one event line to ~/.claude/fable-orch/metrics.jsonl (best effort)."""
-    if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
+    """Append one event line to ~/.claude/orchestrator/metrics.jsonl (best effort)."""
+    if (os.environ.get("ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.join(os.path.expanduser("~"), ".claude", "orchestrator")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:
@@ -185,6 +185,22 @@ def _read_blocked(path):
         return {}
 
 
+def verify_verdict(ledger):
+    """('pass'|'fail'|None, path) for the ledger's verdict file at
+    <ledger dir>/verify/<ledger stem>.json. None when no readable verdict."""
+    stem = os.path.splitext(os.path.basename(ledger))[0]
+    path = os.path.join(os.path.dirname(ledger), "verify", stem + ".json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            verdict = json.load(f).get("verdict")
+    except Exception:
+        return None, path
+    return (str(verdict).strip().lower() if verdict is not None else None), path
+
+
+CLOSED_V_RE = re.compile(r"^\s*[-*+] \[[xX]\]\s*V\.(?:\s|$)", re.M)
+
+
 def already_reminded(session_id, ledger):
     path = stop_sidecar_path(session_id)
     if not path or not os.path.isfile(path):
@@ -216,7 +232,7 @@ TEAMMATE_IDLE_RATE = 0.01
 
 
 def _idle_rate():
-    raw = os.environ.get("FABLE_ORCH_TEAMMATE_IDLE_RATE")
+    raw = os.environ.get("ORCH_TEAMMATE_IDLE_RATE")
     if raw is not None:
         try:
             return max(0.0, float(raw))
@@ -284,7 +300,7 @@ def _cpu_seconds(text):
 
 def reap_idle_teammates(session_id):
     """Kill teammate panes whose CPU RATE stayed under the parked
-    threshold for FABLE_ORCH_TEAMMATE_IDLE_H hours (default 1; 0
+    threshold for ORCH_TEAMMATE_IDLE_H hours (default 1; 0
     disables).
 
     The agent-teams backend parks finished teammates in their tmux
@@ -297,17 +313,17 @@ def reap_idle_teammates(session_id):
     is rate-limited via the state file's mtime. Killing the pane ends
     the teammate process (it exits moments after its pane closes).
     """
-    if (os.environ.get("FABLE_ORCH_SWARM_CLEANUP") or "").strip() == "0":
+    if (os.environ.get("ORCH_SWARM_CLEANUP") or "").strip() == "0":
         return
     try:
-        idle_h = float(os.environ.get("FABLE_ORCH_TEAMMATE_IDLE_H") or 1)
+        idle_h = float(os.environ.get("ORCH_TEAMMATE_IDLE_H") or 1)
     except ValueError:
         idle_h = 1.0
     if idle_h <= 0:
         return
 
     state_path = os.path.join(os.path.expanduser("~"), ".claude",
-                              "fable-orch", "swarm-state.json")
+                              "orchestrator", "swarm-state.json")
     now = time.time()
     try:
         if now - os.path.getmtime(state_path) < TEAMMATE_SWEEP_INTERVAL:
@@ -512,7 +528,7 @@ def touch_session_files(session_id):
     tasks sidecars, resetting the task counter and re-blocking a ledger
     that had already had its one reminder.
     """
-    for prefix in ("fable-orch-model", "fable-orch-stop", "fable-orch-tasks"):
+    for prefix in ("orch-model", "orch-stop", "orch-tasks"):
         path = _tmp_json(prefix, session_id)
         if path and os.path.isfile(path):
             try:
@@ -527,7 +543,7 @@ def run_guard(data):
         return
 
     # The ledger is the chair's; never hold a teammate's close on it.
-    if (os.environ.get("FABLE_ORCH_TEAMMATE_STOP") or "").strip() != "1":
+    if (os.environ.get("ORCH_TEAMMATE_STOP") or "").strip() != "1":
         if _is_teammate_session():
             _metric("stop_suppressed", data.get("session_id"), reason="teammate")
             return
@@ -542,12 +558,44 @@ def run_guard(data):
     except Exception:
         return
 
-    open_items = re.findall(r"^\s*[-*] \[ \](?:\s.*)?$",
-                            _outside_fences(text), flags=re.M)
+    session_id = data.get("session_id")
+    body = _outside_fences(text)
+
+    # VERIFY VALVE: `- [x] V.` is only the verifier's to tick, and it
+    # ticks it after writing a passing verdict file. A ticked V. with no
+    # `verdict: pass` on disk is the chair closing its own work — held
+    # once per session per ledger, like the open-items reminder.
+    # ORCH_VERIFY_GUARD=0 disables it.
+    if ((os.environ.get("ORCH_VERIFY_GUARD") or "").strip() != "0"
+            and CLOSED_V_RE.search(body)):
+        verdict, vpath = verify_verdict(ledger)
+        if verdict != "pass":
+            if owned_by_session(ledger, session_id) and not already_reminded(
+                    session_id, ledger + "#verify"):
+                record_reminder(session_id, ledger + "#verify")
+                _metric("verify_block", session_id, ledger=ledger,
+                        verdict=verdict or "missing")
+                print(json.dumps({
+                    "decision": "block",
+                    "reason": (
+                        f"VERIFY GUARD: {ledger} has `V.` ticked but there is no "
+                        f"passing verdict at {vpath} "
+                        f"(found: {verdict or 'no verdict file'}). Only a FRESH "
+                        "verifier that did not build the work closes V.: untick "
+                        "it, spawn `orch-verifier` (Class: verify, heavy tier) "
+                        "with the request, the ledger path and the work-product "
+                        "paths, and let it write the verdict. This reminder "
+                        "fires once per session."
+                    ),
+                }))
+                return
+            _metric("stop_suppressed", session_id, reason="verify-already-reminded",
+                    ledger=ledger)
+
+    open_items = re.findall(r"^\s*[-*] \[ \](?:\s.*)?$", body, flags=re.M)
     if not open_items:
         return
 
-    session_id = data.get("session_id")
     mode = (os.environ.get("LEDGER_GUARD_STOP_MODE") or "once-per-session").strip().lower()
     if mode != "every-turn":
         if not owned_by_session(ledger, session_id):

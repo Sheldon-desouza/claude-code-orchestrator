@@ -1,0 +1,16 @@
+{
+  "$comment": "Task class -> tier, effort, isolation. The chair tags every spawn prompt's FIRST line `Class: <name>`; the route guard (scripts/ledger_guard_spawn.py) reads the tag and denies a spawn whose model sits below the class's tier, or whose class is `chair-only`. Classes marked `min_tier` accept that tier or any tier above it in `order`. Override per machine at ~/.claude/orchestrator/routing.json.",
+  "version": 1,
+  "order": ["cheap", "bulk", "heavy", "chair"],
+  "default_class": "implement",
+  "classes": {
+    "scan":        { "min_tier": "cheap", "max_tier": "bulk",  "effort": "low",    "isolation": "shared",   "agent": "orch-scout",       "about": "grep, glob, fetch-to-disk, list, count. Batch five lookups into one worker." },
+    "research":    { "min_tier": "bulk",  "max_tier": "bulk",  "effort": "medium", "isolation": "shared",   "agent": "orch-researcher",  "about": "read sources verbatim to scratch, return a brief with quotes and confidence." },
+    "implement":   { "min_tier": "bulk",  "max_tier": "heavy", "effort": "high",   "isolation": "worktree", "agent": "orch-implementer", "about": "code to a spec that cites ledger items; tests; refactors." },
+    "review":      { "min_tier": "bulk",  "max_tier": "heavy", "effort": "high",   "isolation": "shared",   "agent": "orch-reviewer",    "about": "standard code review against the ledger. Not security." },
+    "hard":        { "min_tier": "heavy", "max_tier": "heavy", "effort": "max",    "isolation": "worktree", "agent": "orch-hard-slice",  "about": "architecture, irreversible migrations, multi-system change, stubborn debugging, and any bulk-tier `uncertain` escalation." },
+    "security":    { "min_tier": "heavy", "max_tier": "heavy", "effort": "max",    "isolation": "shared",   "agent": "orch-security",    "about": "ALL security review. Never below heavy, never on the chair." },
+    "verify":      { "min_tier": "heavy", "max_tier": "heavy", "effort": "high",   "isolation": "shared",   "agent": "orch-verifier",    "about": "fresh-eyes verification of a close. Must not have built the work. Writes the verdict file." },
+    "chair-only":  { "min_tier": "chair", "max_tier": "chair", "effort": "max",    "isolation": "shared",   "agent": null,               "about": "arbitration, escalation ceiling. Not delegable; a spawn tagged this is denied." }
+  }
+}

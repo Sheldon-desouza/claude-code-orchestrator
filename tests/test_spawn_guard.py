@@ -31,7 +31,7 @@ def is_deny(result):
 
 def write_marker(tmp, started, session="test-session"):
     """The injector's session marker — arms the stale-ledger check."""
-    marker = tmp / f"fable-orch-model-{session}.json"
+    marker = tmp / f"orch-model-{session}.json"
     marker.write_text(json.dumps({"started": started}), encoding="utf-8")
     return marker
 
@@ -272,7 +272,7 @@ def test_task_without_session_id_passes(repo_dir, tmp_path):
 # --- hardening: corrupt state, hostile stdin, races ---
 
 def _seed_sidecar(tmp, body, session="task-guard-session"):
-    path = tmp / f"fable-orch-tasks-{session}.json"
+    path = tmp / f"orch-tasks-{session}.json"
     path.write_text(body, encoding="utf-8")
     return path
 
@@ -318,7 +318,7 @@ def test_parallel_task_creates_deny_exactly_once(repo_dir, tmp_path):
     from conftest import SCRIPTS, STRIP_ENV
 
     env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
-    env.update({"FABLE_ORCH_METRICS": "0", "FABLE_ORCH_SWARM_CLEANUP": "0",
+    env.update({"ORCH_METRICS": "0", "ORCH_SWARM_CLEANUP": "0",
                 "TMPDIR": str(tmp_path), "TEMP": str(tmp_path), "TMP": str(tmp_path)})
     payload = json.dumps(task_payload(repo_dir))
     procs = [
@@ -331,7 +331,7 @@ def test_parallel_task_creates_deny_exactly_once(repo_dir, tmp_path):
     assert all(p.returncode == 0 for p in procs)
     denies = sum(1 for out, _ in outs if out.strip())
     assert denies == 1
-    state = json.loads((tmp_path / "fable-orch-tasks-task-guard-session.json").read_text())
+    state = json.loads((tmp_path / "orch-tasks-task-guard-session.json").read_text())
     assert state == {"count": 8, "denied": True, "denied_clarify": False}
 
 
@@ -413,10 +413,10 @@ def test_task_metrics_and_stats_summary(repo_dir, tmp_path):
 
     home = tmp_path / "home"
     home.mkdir()
-    env = {"FABLE_ORCH_METRICS": "1", "HOME": str(home)}
+    env = {"ORCH_METRICS": "1", "HOME": str(home)}
     for _ in range(4):
         run_hook(SCRIPT, task_payload(repo_dir), env_extra=env, tmpdir=tmp_path)
-    log = home / ".claude" / "fable-orch" / "metrics.jsonl"
+    log = home / ".claude" / "orchestrator" / "metrics.jsonl"
     events = [json.loads(l) for l in log.read_text().splitlines()]
     deny = [e for e in events if e["event"] == "tasks_deny"]
     supp = [e for e in events if e["event"] == "tasks_suppressed"]

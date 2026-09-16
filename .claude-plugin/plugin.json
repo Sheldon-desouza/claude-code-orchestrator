@@ -1,9 +1,13 @@
 {
   "name": "orchestrator",
-  "description": "Token-frugal multi-agent orchestration for Claude Code, built for a Claude Fable 5 chair: Fable plans and decides, Sonnet 5 carries the volume, Opus 5 takes the hard slices and escalations — each worker's effort sized by the chair — and a two-tier verification valve guards the close. When the Fable limit runs dry, an Opus fallback profile keeps the same discipline running. A Requirements Ledger and guard hooks enforce the discipline mechanically, and finished tmux teammates are reaped automatically. A clarify gate keeps ambiguity from reaching workers who cannot ask the user anything: serious delegation is denied until the ledger carries a `## Clarified` record.",
-  "version": "0.23.0",
+  "description": "Claude Code Orchestrator: a token-saver plugin that keeps Claude Fable 5 (or any top-tier model) in the chair. It clarifies, plans and briefs, then delegates the volume to cheaper models by task class (Sonnet, Haiku), routes hard slices and every security review to Opus, collects short reports, and has a fresh verifier check every close. Hooks enforce the discipline mechanically: no delegation until the questions are answered and the ledger exists, no spawn routed below its class's tier, no close without a passing verdict. Ships 7 tiered agents, 6 slash commands, and a standalone skill for claude.ai.",
+  "version": "1.0.0",
   "author": {
-    "name": "Yusuf Demirkoparan",
-    "url": "https://github.com/Rylaa"
-  }
+    "name": "Sheldon de Souza",
+    "url": "https://github.com/Sheldon-desouza"
+  },
+  "homepage": "https://github.com/Sheldon-desouza/claude-code-orchestrator",
+  "repository": "https://github.com/Sheldon-desouza/claude-code-orchestrator",
+  "license": "MIT",
+  "keywords": ["claude-code", "orchestrator", "multi-agent", "subagents", "token-saver", "fable", "opus", "sonnet", "haiku", "delegation", "hooks", "agent-teams"]
 }
