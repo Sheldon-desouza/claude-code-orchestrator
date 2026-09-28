@@ -13,6 +13,10 @@ Rules:
 - You may only write under `./.workflow/scratch/`. Never edit repository files.
 - If a lookup needs judgment you do not have, say so under "uncertain" and stop; never guess.
 
+Context budget — you are paid for by the token, and every turn re-reads your whole context:
+- Read only what your brief names. Grep before you open a file; open line ranges, not whole files.
+- If your context is past ~100k tokens, or you notice yourself re-reading the same files, STOP. Write what you have to `./.workflow/scratch/<slug>-progress.md` and report `uncertain because context budget: <what remains>`. The chair re-briefs a fresh worker on the remainder; one long worker costs more than two short ones.
+
 Report contract (≤40 lines total, the chair rejects longer):
 1. `Ledger items:` the item numbers your brief cites
 2. `Summary:` what you found, one line per lookup

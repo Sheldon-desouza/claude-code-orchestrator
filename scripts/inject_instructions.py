@@ -144,9 +144,8 @@ def render_profile(profile, model=None, switch=False, tiers=None, root=None):
             "PROFILE_LABEL": f"FALLBACK profile: {holder} holds the chair, {chair} rests",
             "PROFILE_NOTE": (f"The {chair} limit is spent; {holder} holds the chair until "
                              f"it returns. Do NOT spawn {chair}-tier agents — they burn "
-                             f"the exhausted limit. {heavy} is the escalation ceiling "
-                             f"and every verifier. The usage limit still wins over "
-                             f"context hygiene."),
+                             f"the exhausted limit. {heavy} is the escalation ceiling. "
+                             f"The usage limit still wins over context hygiene."),
             "CHAIR": holder,
             "ROUTING_NOTE": (f"\nThe chair tier ({chair}) is RESTING: never spawn it; its "
                              f"roles fall to heavy ({heavy})."),
@@ -162,6 +161,7 @@ def render_profile(profile, model=None, switch=False, tiers=None, root=None):
             "ROUTING_NOTE": "",
         }
     fields["PROFILE_NAME"] = "FALLBACK" if profile == "fallback" else "CHAIR"
+    fields["HEAVY_MAX"] = str(tiers["heavy"].get("max_effort") or "max")
     fields.update({"HEAVY": heavy, "BULK": tiers["bulk"]["model"],
                    "CHEAP": tiers["cheap"]["model"]})
     for key, val in fields.items():
@@ -313,8 +313,15 @@ def main():
     # Any unrecognised future source takes the same safe side: an
     # unproven source gets the full core. Wrong-delta costs a ruleless
     # chair; wrong-full-core costs ~3.7k chars.
+    # ALSO GATED TO AN AUTHORITATIVE SIGNAL (ported from upstream
+    # v0.15.1). Only the payload model and the env pin describe THIS
+    # session's chair; the settings default is global (another
+    # session's `/model` moves it) and the marker model is sticky
+    # history. A "switch" derived from either would tell a chair that
+    # never moved that its limit is spent — then ping-pong back on the
+    # next real payload.
     switched = (bool(prev_profile) and prev_profile != profile
-                and fire == "resume")
+                and fire == "resume" and source in ("payload", "override"))
 
     # The profile is chair-only; a teammate session skips the injection
     # but still gets its marker below — stop, spawn, and cleanup key off
@@ -329,7 +336,7 @@ def main():
         try:
             text = render_profile(profile, model=decided_from, switch=switched)
         except Exception:
-            return  # never break session start
+            text = None  # nothing delivered; the marker below records that
 
     # Session marker for the guards (best effort; never fatal).
     # `started` marks the session's FIRST start and must survive the
@@ -357,7 +364,18 @@ def main():
             # teammate received nothing, so its marker carries the
             # previous value forward rather than claiming an injection
             # that never happened.
-            stored_profile = prev_profile if teammate else profile
+            # A fire that delivered nothing (teammate skip, unreadable
+            # template) records no new profile: on `resume` the earlier
+            # core is provably still in context, so the previous value
+            # carries forward; on any other fire the context may have
+            # been rewritten or discarded, so the record is CLEARED and a
+            # later switch gets the full core, never a bare delta.
+            if text is not None:
+                stored_profile = profile
+            elif fire == "resume":
+                stored_profile = prev_profile
+            else:
+                stored_profile = None
             # Atomic replace: a crash mid-write must never leave a
             # truncated marker. The tmp name keeps the orch-*.json
             # shape so an orphan from a crash still matches the 96h sweep.
@@ -377,12 +395,21 @@ def main():
                 source=source, reason="teammate")
         return
 
+    if text is None:
+        return  # never break session start
+
     if switched:
         # Distinct event, not a field on `inject`: an inject counts a
         # session that received the discipline, a switch counts a chair
         # that moved tiers mid-session. `fire` records which SessionStart
         # kind delivered the delta (resume/compact/clear).
         _metric("inject_switch", session_id, model=model, profile=profile,
+                source=source, from_profile=prev_profile, fire=fire)
+    elif prev_profile and prev_profile != profile:
+        # A profile change the gate turned into a full core: still an
+        # `inject`, but `from_profile` + `fire` record which SessionStart
+        # kinds real fallback re-fires arrive on.
+        _metric("inject", session_id, model=model, profile=profile,
                 source=source, from_profile=prev_profile, fire=fire)
     else:
         _metric("inject", session_id, model=model, profile=profile,

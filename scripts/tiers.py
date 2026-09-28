@@ -26,20 +26,20 @@ PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))
 
 DEFAULT_TIERS = {
-    "chair": {"model": "fable", "match": ["fable"], "fallbacks": ["opus", "sonnet"]},
-    "heavy": {"model": "opus", "match": ["opus"], "fallbacks": ["fable", "sonnet"]},
-    "bulk": {"model": "sonnet", "match": ["sonnet"], "fallbacks": ["opus"]},
-    "cheap": {"model": "haiku", "match": ["haiku"], "fallbacks": ["sonnet"]},
+    "chair": {"model": "fable", "match": ["fable"], "fallbacks": ["opus", "sonnet"], "max_effort": "max"},
+    "heavy": {"model": "opus", "match": ["opus"], "fallbacks": ["fable", "sonnet"], "max_effort": "xhigh"},
+    "bulk": {"model": "sonnet", "match": ["sonnet"], "fallbacks": ["opus"], "max_effort": "max"},
+    "cheap": {"model": "haiku", "match": ["haiku"], "fallbacks": ["sonnet"], "max_effort": "low"},
 }
 DEFAULT_ORDER = ["cheap", "bulk", "heavy", "chair"]
 DEFAULT_CLASSES = {
-    "scan": {"min_tier": "cheap", "max_tier": "bulk", "effort": "low", "agent": "orch-scout"},
+    "scan": {"min_tier": "cheap", "max_tier": "cheap", "effort": "low", "agent": "orch-scout"},
     "research": {"min_tier": "bulk", "max_tier": "bulk", "effort": "medium", "agent": "orch-researcher"},
     "implement": {"min_tier": "bulk", "max_tier": "heavy", "effort": "high", "agent": "orch-implementer"},
     "review": {"min_tier": "bulk", "max_tier": "heavy", "effort": "high", "agent": "orch-reviewer"},
-    "hard": {"min_tier": "heavy", "max_tier": "heavy", "effort": "max", "agent": "orch-hard-slice"},
-    "security": {"min_tier": "heavy", "max_tier": "heavy", "effort": "max", "agent": "orch-security"},
-    "verify": {"min_tier": "heavy", "max_tier": "heavy", "effort": "high", "agent": "orch-verifier"},
+    "hard": {"min_tier": "heavy", "max_tier": "heavy", "effort": "xhigh", "agent": "orch-hard-slice"},
+    "security": {"min_tier": "heavy", "max_tier": "heavy", "effort": "xhigh", "agent": "orch-security"},
+    "verify": {"min_tier": "bulk", "max_tier": "heavy", "effort": "high", "agent": "orch-verifier"},
     "chair-only": {"min_tier": "chair", "max_tier": "chair", "effort": "max", "agent": None},
 }
 

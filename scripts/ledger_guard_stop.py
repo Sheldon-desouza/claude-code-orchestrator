@@ -528,7 +528,7 @@ def touch_session_files(session_id):
     tasks sidecars, resetting the task counter and re-blocking a ledger
     that had already had its one reminder.
     """
-    for prefix in ("orch-model", "orch-stop", "orch-tasks"):
+    for prefix in ("orch-model", "orch-stop", "orch-tasks", "orch-solo", "orch-budget"):
         path = _tmp_json(prefix, session_id)
         if path and os.path.isfile(path):
             try:
@@ -582,7 +582,7 @@ def run_guard(data):
                         f"passing verdict at {vpath} "
                         f"(found: {verdict or 'no verdict file'}). Only a FRESH "
                         "verifier that did not build the work closes V.: untick "
-                        "it, spawn `orch-verifier` (Class: verify, heavy tier) "
+                        "it, spawn `orch-verifier` (Class: verify; heavy model for risky closes) "
                         "with the request, the ledger path and the work-product "
                         "paths, and let it write the verdict. This reminder "
                         "fires once per session."

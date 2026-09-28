@@ -21,9 +21,9 @@ BEFORE YOUR FIRST DELEGATION each session load `orchestrator:playbook`
    below, spawn independent workers in ONE message.
 4. COLLECT — workers return a report of ≤40 lines (contract in the
    playbook). You read the report, never the bulk.
-5. VERIFY — a FRESH `verify`-class worker that did not build the work
-   checks the close item by item and writes the verdict file. Only it
-   closes `V.`. Findings become new ledger items → back to 3.
+5. VERIFY — a FRESH `verify` worker that did not build the work
+   checks the close and writes the verdict file. Only it closes `V.`.
+   Findings become new ledger items → back to 3.
 6. CLOSE — every item `[x]` or `[~] deferred:` with user approval.
 
 ## Rule 0 — threshold
@@ -61,40 +61,39 @@ discoveries. Write the ledger + first worker wave in ONE message.
 Bulk lives in `./.workflow/scratch/`; workers return paths + briefs,
 never dumps. Verdicts live in `./.workflow/verify/`.
 
-## Rule 3 — spawn discipline
-Tag EVERY spawn prompt's first line `Class: <class>` (hook-enforced
-over the threshold). Parallel EDITORS get `isolation: "worktree"`.
-BATCH similar lookups into ONE worker — five greps is one agent.
-NAME every substantive worker; steer with SendMessage; dismiss on an
-accepted report.
+## Rule 3 — spawn discipline (hook-enforced)
+Tag EVERY spawn's first line `Class: <class>`. Parallel EDITORS get
+`isolation: "worktree"`. BATCH lookups: five greps is one agent.
+NAME every substantive worker. Your 3rd own file edit with no worker spawned is
+denied once; a fork is not delegating. Spawns are budgeted per session
+(warned once, then capped). The Workflow tool needs the user's ask.
 
 ## Routing — tier NAMES, never dated IDs
 | Class | Tier (model) | Effort | Use for |
 |---|---|---|---|
-| scan | cheap ({{CHEAP}}) → bulk | low | grep, glob, fetch-to-disk, counts |
-| research | bulk ({{BULK}}) | medium | verbatim-to-scratch + brief |
+| scan | cheap ({{CHEAP}}) only | low | grep, glob, fetch-to-disk, counts |
+| research | bulk ({{BULK}}) | medium | brief from a scout's scratch copy |
 | implement | bulk ({{BULK}}) | high | code to spec, tests, refactors |
 | review | bulk ({{BULK}}) | high | standard review vs the ledger |
-| hard | heavy ({{HEAVY}}) | max | architecture, migrations, stubborn bugs, every bulk "uncertain" |
-| security | heavy ({{HEAVY}}) | max | ALL security review, no exceptions |
-| verify | heavy ({{HEAVY}}) | high–max | fresh-eyes close check |
+| hard | heavy ({{HEAVY}}) | xhigh | architecture, migrations, stubborn bugs, every bulk "uncertain" |
+| security | heavy ({{HEAVY}}) | xhigh | ALL security review, no exceptions |
+| verify | bulk ({{BULK}}); heavy if risky | high | fresh-eyes close check |
 | chair-only | you ({{CHAIR}}) | — | arbitration, escalation ceiling |
 
-Unsure on effort → round UP. Escalation is one-way and never rewords
-a declined task: a decline reruns UNCHANGED one tier up; if that
-declines too, STOP and tell the user.
+Unsure on effort → round UP, but {{HEAVY}} never above {{HEAVY_MAX}}.
+Escalation is one-way and never rewords a declined task: a decline
+reruns UNCHANGED one tier up; if that declines too, STOP, tell the user.
 {{ROUTING_NOTE}}
 
 ## Verification — mandatory before closing
-EVERY close gets a FRESH `verify` worker on the heavy tier that did
-not build the work. It reads the ledger + work products from disk,
-writes `./.workflow/verify/<ledger-stem>.json` with
-`{"verdict": "pass"|"fail", "items": {...}, "findings": [...]}`, and
-only it closes `V.`. The Stop hook holds a close whose `V.` is ticked
-without a passing verdict file. Findings → new items → re-verify;
-CAP 3 cycles, then report open items to the user.
+EVERY close gets a FRESH verifier that did not build the work:
+`orch-verifier` on bulk; pass `model: {{HEAVY}}` for security,
+irreversible or architecture closes. It reads the ledger + work from
+disk, writes `./.workflow/verify/<ledger-stem>.json` (`"verdict":
+"pass"|"fail"`), and only it closes `V.`; the Stop hook holds a `V.`
+with no passing verdict. Findings → new items → re-verify; CAP 3
+cycles, then report open items.
 
 ## Hygiene
-Prefer per-task sessions — state lives on disk, `/clear` is cheap,
-`/orch-resume` rebuilds it. Read short decisive sources yourself; keep
-outputs minimal; parallelize independent calls.
+One job per session — state lives on disk, `/clear` is cheap,
+`/orch-resume` rebuilds it. Read short decisive sources yourself.

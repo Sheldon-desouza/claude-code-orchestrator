@@ -71,6 +71,12 @@ def test_override_merges_per_tier(tmp_path, monkeypatch):
     assert t["chair"]["model"] == "fable"            # untouched
 
 
+def test_heavy_tier_is_capped_at_xhigh():
+    t = tiers.load_tiers()
+    assert t["heavy"]["max_effort"] == "xhigh"
+    assert t["cheap"]["max_effort"] == "low"
+
+
 def test_malformed_override_is_ignored(tmp_path, monkeypatch):
     cfg = tmp_path / "cfg"
     cfg.mkdir()
@@ -119,6 +125,8 @@ def test_read_only_agents_cannot_edit():
 def test_every_agent_carries_the_report_contract():
     for path in (REPO / "agents").glob("*.md"):
         text = path.read_text(encoding="utf-8")
+        assert "Context budget" in text, path.name      # v1.1: bounded workers
+        assert "~100k tokens" in text, path.name
         assert "≤40 lines" in text, path.name
         assert "Confidence:" in text, path.name
         assert "uncertain because" in text, path.name
@@ -152,7 +160,9 @@ def test_standalone_skill_carries_the_loop_without_hooks():
 # --- nothing hardcodes a dated model id outside the tier map ---
 
 def test_no_dated_model_ids_outside_config():
-    dated = re.compile(r"\b(opus|sonnet|fable|haiku)[ -]?\d+[.-]\d+", re.I)
+    # A repo NAME in an attribution line (…-opus5.5-orchestrator) is not
+    # a model id the prose relies on; everything else is.
+    dated = re.compile(r"\b(opus|sonnet|fable|haiku)[ -]?\d+[.-]\d+(?!-orchestrator)", re.I)
     for sub in ("instructions", "skills", "agents", "commands", "scripts"):
         for p in (REPO / sub).rglob("*"):
             if p.is_file() and p.suffix in (".md", ".tmpl", ".py"):

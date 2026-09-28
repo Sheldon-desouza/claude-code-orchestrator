@@ -14,6 +14,14 @@ markdown parser, the ledger gates, the Stop-hook cadence and
 ownership logic, the session markers, tmux teammate reaping, the
 SessionStart profile-switch delta logic, and the test harness.
 
+Ported in v1.1.0 from the later upstream line
+"fable5-opus5.5-orchestrator" by the same author
+(https://github.com/Rylaa/fable5-opus5.5-orchestrator, MIT): the solo
+guard and naming gate (v0.16.0-v0.16.1, scripts/solo_guard.py), the
+per-prompt reminder (v0.16.0, scripts/remind_chair.py), and the
+profile-switch delta fix (v0.15.1, in scripts/inject_instructions.py).
+Adapted to this project's tier map and env names.
+
 Added in this project: the tier map and routing table (config/), the
 route guard, the verify valve, seven tiered agent definitions, six
 slash commands, the standalone skill, the doctor, and their tests.

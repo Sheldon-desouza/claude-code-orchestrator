@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0 — 2026-09-28
+
+Driven by real usage: one 17-hour session with Fable in the chair spent 66% on Opus, 21% on Sonnet, 0% on Haiku, and read 1.1B cached tokens, 79% of it above 150k context. The chair discipline held (Fable was 14%); the workers were the cost.
+
+### Behaviour changes (read before upgrading)
+- **Verification runs on Sonnet by default.** `orch-verifier` now pins the bulk tier; pass `model: opus` for security, irreversible or architecture closes. Measured: 80 of 168 heavy-tier spawns were verifiers.
+- **Scans are cheap-tier only.** `Class: scan` must run on `orch-scout` (Haiku). Measured: 11 of 16 scans ran on Sonnet.
+- **Opus is capped at `xhigh` effort.** `hard` and `security` default to `xhigh`; a spawn asking the heavy tier for `max` is denied. Per tier via `max_effort` in `tiers.json`.
+- **Five hook events** instead of four: `UserPromptSubmit` is new.
+
+### Added
+- **Budget governor** (spawn hook): counts every allowed spawn per session, and heavy-tier ones separately. One checkpoint deny past half a cap, then a hard stop at the cap until the user raises it in `.workflow/BUDGET.json`. Defaults 60 spawns / 20 heavy. `ORCH_BUDGET`, `ORCH_BUDGET_SPAWNS`, `ORCH_BUDGET_HEAVY`.
+- **Worker context budget** in all seven agents: past ~100k tokens a worker writes progress to scratch and hands back `uncertain because context budget`.
+- **Solo guard** (new PreToolUse hook, ported from upstream v0.16.0): the chair's 3rd Edit/Write in a session with no worker spawned is denied once. Forks do not count as delegating. `ORCH_SOLO_EDITS`, `ORCH_SOLO_GUARD`.
+- **Naming gate** (ported from upstream v0.16.1): a long unnamed spawn is denied once, so it runs in a visible pane. On only when agent teams are on, or `ORCH_NAME_GATE=1`.
+- **Per-prompt reminder** (new UserPromptSubmit hook, ported from upstream v0.16.0): one ~40-token line on every prompt. `ORCH_REMIND=0` disables it.
+- **`/orch-stats`** now shows where spawns ran by tier with a warning when heavy + chair pass 35% or cheap never runs, the class/tier mix, route denials by reason, solo and budget events.
+- Research pipeline: the scout fetches every source to scratch in one batched call; researchers brief the disk copy.
+
+### Fixed
+- **Profile-switch delta only on authoritative evidence** (ported from upstream v0.15.1): a `/model` change in another session moved the global settings default, and the next null-payload resume told a Fable chair its limit was spent. The delta now needs the payload model or `ORCH_PROFILE`. A fire that delivers nothing clears the recorded profile outside `resume`, and the marker is still written when the template is unreadable.
+
+### Not ported, on purpose
+- Upstream v0.16.0 removed the Requirements Ledger, the clarify gate and the fresh-eyes verifier. This project keeps them: the loop of clarify, delegate, verify is the product.
+
 ## 1.0.0 — 2026-09-16
 
 First release of Claude Code Orchestrator, forked from

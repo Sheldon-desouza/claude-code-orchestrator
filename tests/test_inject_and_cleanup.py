@@ -480,6 +480,34 @@ def test_switching_back_and_forth_on_resume_keeps_delivering_deltas(tmp_path):
     assert _marker(tmp_path, "s-sw3")["profile"] == "chair"
 
 
+def test_settings_derived_change_never_sends_a_delta(tmp_path):
+    # Ported from upstream v0.15.1: the settings default is GLOBAL — a
+    # `/model opus` in another session moves it. A null-payload resume
+    # must not tell a Fable chair "the fable limit is spent".
+    _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s-glob"})
+    _write_settings(tmp_path, "opus[1m]")
+    text = context_of(_inject(tmp_path, {"session_id": "s-glob", "source": "resume"}))
+    assert "Profile switch" not in text
+    assert "FALLBACK profile:" in text        # full core, from the settings signal
+
+
+def test_unreadable_template_still_writes_the_marker(tmp_path):
+    # A fire that delivers nothing records no profile outside `resume`.
+    root = tmp_path / "broken-root"
+    (root / "instructions").mkdir(parents=True)
+    r = run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-broken",
+                          "source": "compact"},
+                 env_extra={"CLAUDE_PLUGIN_ROOT": str(root)}, tmpdir=tmp_path)
+    assert r is None
+    marker = json.loads((tmp_path / "orch-model-s-broken.json").read_text())
+    assert marker["model"] == "claude-fable-5" and marker["profile"] is None
+
+
+def test_core_names_the_heavy_effort_cap():
+    for name in CORES:
+        assert "never above xhigh" in _flat(_instr(name)), name
+
+
 def test_switch_on_a_context_losing_fire_gets_the_full_core(tmp_path):
     # `compact` re-fires BECAUSE the context was rewritten and `clear`
     # because it was discarded — the earlier core may be gone, and the

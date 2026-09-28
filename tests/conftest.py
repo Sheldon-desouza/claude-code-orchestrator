@@ -29,6 +29,15 @@ STRIP_ENV = [
     "ORCH_ROUTE_GUARD",
     "ORCH_VERIFY_GUARD",
     "ORCH_CONFIG_DIR",
+    "ORCH_BUDGET",
+    "ORCH_BUDGET_SPAWNS",
+    "ORCH_BUDGET_HEAVY",
+    "ORCH_SOLO_GUARD",
+    "ORCH_SOLO_EDITS",
+    "ORCH_NAME_CHARS",
+    "ORCH_NAME_GATE",
+    "ORCH_REMIND",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
     "CLAUDE_CONFIG_DIR",
     "TMUX_TMPDIR",
     "CLAUDE_PLUGIN_ROOT",
@@ -84,6 +93,7 @@ def run_hook(script, payload=None, raw=None, env_extra=None, tmpdir=None):
     # gate turns it on explicitly via env_extra.
     env.setdefault("ORCH_ROUTE_GUARD", "0")
     env.setdefault("ORCH_VERIFY_GUARD", "0")
+    env.setdefault("ORCH_BUDGET", "0")
     env["ORCH_CONFIG_DIR"] = str(Path(tmpdir) / "orchcfg") if tmpdir else "/nonexistent-orch-cfg"
     # Point Claude Code config at an (empty) sandbox dir so the injector's
     # settings.json model-detection never reads the developer's real

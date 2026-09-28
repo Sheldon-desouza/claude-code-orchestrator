@@ -67,10 +67,40 @@ def test_security_below_heavy_is_denied(repo_dir, tmp_path):
     assert "orch-security" in reason
 
 
-def test_verify_below_heavy_is_denied(repo_dir, tmp_path):
+def test_verify_below_bulk_is_denied(repo_dir, tmp_path):
     write_ledger(repo_dir)
     assert "orch-verifier" in _reason(
         _spawn(repo_dir, "Class: verify\n" + LONG, tmp_path, {"model": "haiku"}))
+
+
+def test_verify_runs_on_bulk_by_default_and_heavy_when_asked(repo_dir, tmp_path):
+    # v1.1: the verifier agent pins sonnet; opus is allowed for risky closes.
+    write_ledger(repo_dir)
+    assert _spawn(repo_dir, "Class: verify\n" + LONG, tmp_path,
+                  {"subagent_type": "orch-verifier"}) is None
+    assert _spawn(repo_dir, "Class: verify\n" + LONG, tmp_path,
+                  {"subagent_type": "orch-verifier", "model": "opus"}) is None
+
+
+def test_scan_is_cheap_tier_only(repo_dir, tmp_path):
+    # v1.1: measured 11 of 16 scans on sonnet; scans now belong to the scout.
+    write_ledger(repo_dir)
+    assert _spawn(repo_dir, "Class: scan\n" + LONG, tmp_path,
+                  {"subagent_type": "orch-scout"}) is None
+    assert "orch-scout" in _reason(
+        _spawn(repo_dir, "Class: scan\n" + LONG, tmp_path, {"model": "sonnet"}))
+
+
+def test_effort_cap_on_the_heavy_tier(repo_dir, tmp_path):
+    write_ledger(repo_dir)
+    assert _spawn(repo_dir, "Class: hard\n" + LONG, tmp_path,
+                  {"subagent_type": "orch-hard-slice", "effort": "xhigh"}) is None
+    reason = _reason(_spawn(repo_dir, "Class: hard\n" + LONG, tmp_path,
+                            {"subagent_type": "orch-hard-slice", "effort": "max"}))
+    assert "capped at `xhigh`" in reason
+    # bulk is not capped below max
+    assert _spawn(repo_dir, "Class: implement\n" + LONG, tmp_path,
+                  {"subagent_type": "orch-implementer", "effort": "max"}) is None
 
 
 def test_security_on_heavy_passes(repo_dir, tmp_path):

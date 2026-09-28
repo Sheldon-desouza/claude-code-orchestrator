@@ -39,6 +39,10 @@ def main():
     ledgers = Counter()
     swarm_reaped = 0
     panes_reaped = 0
+    by_tier = Counter()        # every allowed spawn, by the tier it ran on
+    by_class = Counter()       # over-threshold spawns, by class tag
+    route_denies = Counter()   # route guard denials, by reason
+    switch_fires = Counter()   # profile changes delivered as a full core, by fire
 
     for rec in records(path):
         event = rec.get("event") or "?"
@@ -53,6 +57,14 @@ def main():
             profiles[rec.get("profile") or rec.get("model") or "?"] += 1
         if event == "stop_block":
             ledgers[rec.get("ledger") or "?"] += 1
+        if event == "budget_count":
+            by_tier[rec.get("tier") or "?"] += 1
+        if event == "route_pass":
+            by_class[f"{rec.get('cls') or '?'} on {rec.get('tier') or '?'}"] += 1
+        if event == "route_deny":
+            route_denies[rec.get("reason") or "?"] += 1
+        if event == "inject" and rec.get("from_profile"):
+            switch_fires[f"{rec.get('from_profile')}->{rec.get('profile')} on {rec.get('fire') or '?'}"] += 1
         if event == "cleanup":
             try:
                 swarm_reaped += int(rec.get("swarm_own") or 0)
@@ -107,6 +119,45 @@ def main():
         # tiers mid-flight.
         print(f"\nmid-session profile switches: {switches} "
               f"(short delta injected, not the full core)")
+
+    if by_tier:
+        total = sum(by_tier.values())
+        print(f"\n== where the spawns ran ({total} allowed spawns) ==")
+        for name in ("cheap", "bulk", "heavy", "chair"):
+            n = by_tier.get(name, 0)
+            print(f"{name:6} {n:6}  {100 * n / total:5.1f}%")
+        pricey = by_tier.get("heavy", 0) + by_tier.get("chair", 0)
+        if total and pricey / total > 0.35:
+            print(f"  note: {100 * pricey / total:.0f}% of spawns ran on heavy or the chair. "
+                  "Verify and implement belong on bulk, scans on cheap.")
+        if total and by_tier.get("cheap", 0) == 0:
+            print("  note: the cheap tier never ran. Send grep/fetch/count work to orch-scout.")
+
+    if by_class:
+        print("\n== routed spawns by class and tier (over the threshold) ==")
+        for name, count in by_class.most_common():
+            print(f"{count:6}  {name}")
+
+    if route_denies:
+        print("\n== route guard denials by reason ==")
+        for name, count in route_denies.most_common():
+            print(f"{count:6}  {name}")
+
+    solo = events.get("solo_deny", 0)
+    unnamed = events.get("unnamed_spawn_deny", 0)
+    if solo or unnamed:
+        print(f"\nchair nudges: {solo} solo-edit denies (chair editing with no worker), "
+              f"{unnamed} unnamed-spawn denies")
+
+    bwarn = events.get("budget_warn", 0)
+    bcap = events.get("budget_cap", 0)
+    if bwarn or bcap:
+        print(f"\nbudget: {bwarn} checkpoints hit, {bcap} spawns stopped at a cap")
+
+    if switch_fires:
+        print("\n== profile changes delivered as a full core ==")
+        for name, count in switch_fires.most_common():
+            print(f"{count:6}  {name}")
 
     if swarm_reaped:
         print(f"\ntmux teammate servers reaped: {swarm_reaped}")

@@ -1,7 +1,7 @@
 {
   "name": "orchestrator",
-  "description": "Claude Code Orchestrator: a token-saver plugin that keeps Claude Fable 5 (or any top-tier model) in the chair. It clarifies, plans and briefs, then delegates the volume to cheaper models by task class (Sonnet, Haiku), routes hard slices and every security review to Opus, collects short reports, and has a fresh verifier check every close. Hooks enforce the discipline mechanically: no delegation until the questions are answered and the ledger exists, no spawn routed below its class's tier, no close without a passing verdict. Ships 7 tiered agents, 6 slash commands, and a standalone skill for claude.ai.",
-  "version": "1.0.0",
+  "description": "Claude Code Orchestrator: a token-saver plugin that keeps Claude Fable 5 (or any top-tier model) in the chair. It clarifies, plans and briefs, then delegates the volume to cheaper models by task class (Haiku scouts, Sonnet builders and verifiers), routes hard slices and every security review to Opus, collects short reports, and has a fresh verifier check every close. Hooks enforce it: no delegation before the questions are answered, no spawn on the wrong tier, no chair doing the work itself, a per-session spawn budget, and no close without a passing verdict. 7 tiered agents, 6 commands, a standalone skill for claude.ai.",
+  "version": "1.1.0",
   "author": {
     "name": "Sheldon de Souza",
     "url": "https://github.com/Sheldon-desouza"
@@ -9,5 +9,18 @@
   "homepage": "https://github.com/Sheldon-desouza/claude-code-orchestrator",
   "repository": "https://github.com/Sheldon-desouza/claude-code-orchestrator",
   "license": "MIT",
-  "keywords": ["claude-code", "orchestrator", "multi-agent", "subagents", "token-saver", "fable", "opus", "sonnet", "haiku", "delegation", "hooks", "agent-teams"]
+  "keywords": [
+    "claude-code",
+    "orchestrator",
+    "multi-agent",
+    "subagents",
+    "token-saver",
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku",
+    "delegation",
+    "hooks",
+    "agent-teams"
+  ]
 }

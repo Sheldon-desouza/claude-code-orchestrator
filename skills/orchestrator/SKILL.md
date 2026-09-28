@@ -38,13 +38,13 @@ only if you refuse to do the volume yourself.
 
    | Class | Who does it | Effort |
    |---|---|---|
-   | scan | cheapest tier | low |
-   | research | mid tier, one source per helper | medium |
+   | scan | cheapest tier, always | low |
+   | research | mid tier, reading the scan's saved copy | medium |
    | implement | mid tier | high |
    | review | mid tier | high |
-   | hard | second-best tier | max |
-   | security | second-best tier, always | max |
-   | verify | second-best tier, someone who did not build it | high–max |
+   | hard | second-best tier | xhigh |
+   | security | second-best tier, always | xhigh |
+   | verify | mid tier, someone who did not build it (second-best for risky closes) | high |
    | chair-only | you | — |
 
    Batch similar lookups into one helper. Send independent helpers at
@@ -81,6 +81,18 @@ only if you refuse to do the volume yourself.
   when the source fits in a few hundred lines.
 - **Per-task sessions.** State lives on disk, so clearing the
   conversation between tasks is cheap.
+
+## Keep the helpers small
+
+- **Bound every helper's context.** Tell each one: read only what the
+  brief names, and past ~100k tokens stop, save progress to scratch and
+  report. One long helper re-reads its whole context every turn; two
+  short ones are cheaper.
+- **Budget the session.** Decide up front how many helpers and how many
+  second-best-tier helpers the job deserves, and stop to ask the user
+  before going past it.
+- **Do not do the work yourself.** If you catch yourself on a third
+  file edit with no helper running, stop and delegate.
 
 ## Inside Claude Code
 

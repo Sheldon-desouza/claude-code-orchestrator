@@ -40,13 +40,13 @@ tier OR above its ceiling, an untagged spawn, and any spawn tagged
 
 | Class | Tier | Effort | Agent | Notes |
 |---|---|---|---|---|
-| scan | cheap (or bulk) | low | orch-scout | batch lookups; five greps is ONE worker |
-| research | bulk | medium | orch-researcher | one source per worker, verbatim to scratch first |
+| scan | cheap only | low | orch-scout | batch lookups; five greps is ONE worker |
+| research | bulk | medium | orch-researcher | brief from the scout's scratch copy |
 | implement | bulk (or heavy) | high | orch-implementer | worktree isolation when editors run in parallel |
 | review | bulk (or heavy) | high | orch-reviewer | never security |
-| hard | heavy | max | orch-hard-slice | architecture, migrations, stubborn bugs, escalations |
-| security | heavy | max | orch-security | ALL security review; read-only |
-| verify | heavy | high–max | orch-verifier | fresh eyes; writes the verdict; alone closes `V.` |
+| hard | heavy | xhigh | orch-hard-slice | architecture, migrations, stubborn bugs, escalations |
+| security | heavy | xhigh | orch-security | ALL security review; read-only |
+| verify | bulk (heavy if risky) | high | orch-verifier | fresh eyes; writes the verdict; alone closes `V.` |
 | chair-only | chair | — | — | not delegable |
 
 Use the shipped agents by `subagent_type` — they pin the tier's model
@@ -58,8 +58,9 @@ it and names the `orch-*` agent to use instead. Only `hard`,
 built-in agent.
 
 Effort: low = mechanical, medium = routine spec work, high =
-multi-file implementation / debugging / review, max = architecture,
-migrations, security, escalations. Unsure → round UP.
+multi-file implementation / debugging / review, xhigh = architecture,
+migrations, security, escalations. The heavy tier is capped at xhigh
+(`max_effort` in the tier map; the route guard enforces it).
 
 ## Escalation
 
@@ -70,10 +71,12 @@ a declined task to slip past a classifier.
 
 ## Research pipeline — parallel fan-out, no mid-flight dumps
 
-YOU pick the questions and the sources. ONE `research` worker per
-source: it fetches the source VERBATIM to `./.workflow/scratch/`
-first, THEN builds a brief from the disk copy — claims, exact quotes,
-confidence, contradictions, path. A final `review`-class worker at
+YOU pick the questions and the sources. ONE `scan` worker (the
+cheap scout) fetches every source VERBATIM to `./.workflow/scratch/`
+in one batched call; THEN one `research` worker per source reads that
+disk copy and briefs it — claims, exact quotes, confidence,
+contradictions, path. Fetching on the cheap tier and reading on the
+bulk tier is the split that keeps research affordable. A final `review`-class worker at
 `high` synthesizes across the briefs. You check the synthesis and its
 verbatim evidence against the ledger and decide. Intermediates never
 enter your context.
@@ -124,7 +127,9 @@ stacked (the plugin reaps forgotten panes).
 
 ## Verification procedure
 
-The verifier is FRESH — it has not worked on the task. Give it the
+The verifier is FRESH — it has not worked on the task. It runs on
+the bulk tier (`orch-verifier`); pass the heavy model only for
+security, irreversible or architecture closes. Give it the
 original request, the ledger path, and the work-product paths (diffs,
 reports — not the raw scratch dump). It reads from disk; its only job
 is to find what is missing, wrong, or unaddressed, item by item. It

@@ -12,8 +12,9 @@ def _manifest():
         return json.load(f)["hooks"]
 
 
-def test_all_four_events_registered():
-    assert set(_manifest()) == {"SessionStart", "PreToolUse", "Stop", "SessionEnd"}
+def test_all_five_events_registered():
+    assert set(_manifest()) == {"SessionStart", "UserPromptSubmit", "PreToolUse",
+                                "Stop", "SessionEnd"}
 
 
 def test_every_hook_command_script_exists():
@@ -34,3 +35,13 @@ def test_pretooluse_matcher_covers_the_gated_tools():
         assert pattern.search(tool), f"matcher misses {tool}"
     for tool in ("TaskUpdate", "TaskList", "AgentOutput", "WorkflowX"):
         assert not pattern.search(tool), f"matcher over-matches {tool}"
+
+
+def test_solo_guard_matcher_covers_spawns_and_edits():
+    entry = [e for e in _manifest()["PreToolUse"] if "solo_guard.py" in e["hooks"][0]["command"]]
+    assert len(entry) == 1
+    pattern = re.compile(entry[0]["matcher"])
+    for tool in ("Agent", "Task", "Edit", "Write", "MultiEdit", "NotebookEdit"):
+        assert pattern.search(tool), f"solo matcher misses {tool}"
+    for tool in ("Bash", "Read", "EditX", "TaskCreate"):
+        assert not pattern.search(tool), f"solo matcher over-matches {tool}"

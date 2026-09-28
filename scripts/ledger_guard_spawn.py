@@ -78,6 +78,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tiers import class_of_prompt, load_routing, load_tiers, rank, tier_of  # noqa: E402
+from _state import env_int, tmp_json, update_state  # noqa: E402
 
 try:
     import fcntl
@@ -742,7 +743,11 @@ def _clarify_reason(ledger, lead, failures=()):
     )
 
 
+DENIED = []
+
+
 def _deny(reason):
+    DENIED.append(reason)
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -775,6 +780,30 @@ def _agent_tiers(routing):
         if agent:
             out[str(agent)] = entry.get("min_tier")
     return out
+
+
+def spawn_tier(data, tool_input, tiers=None, routing=None):
+    """(tier, how) for the worker this spawn will run on.
+
+    An explicit `model` wins; a shipped orch-* agent pins its tier;
+    anything else (general-purpose, Explore, …) inherits the CHAIR's
+    model, read from the injector marker — no marker or an unknown
+    chair model means it IS the chair. `tier` is None only when an
+    explicit model is unknown to the tier map."""
+    tiers = tiers or load_tiers()
+    routing = routing or load_routing()
+    model = tool_input.get("model")
+    agent = str(tool_input.get("subagent_type") or "").strip()
+    if isinstance(model, str) and model.strip():
+        return tier_of(model, tiers), "model"
+    if agent in _agent_tiers(routing):
+        return _agent_tiers(routing)[agent], "agent"
+    chair_model = _session_model(data.get("session_id"))
+    tier = tier_of(chair_model, tiers) if chair_model else None
+    return (tier or "chair"), "inherit"
+
+
+EFFORT_ORDER = ("low", "medium", "high", "xhigh", "max")
 
 
 def route_check(data, tool_input, text):
@@ -823,20 +852,7 @@ def route_check(data, tool_input, text):
             "re-classify the spawn."
         )
 
-    # Which tier will run this spawn? An explicit model wins; a shipped
-    # orch-* agent pins its tier; anything else inherits the chair.
-    model = tool_input.get("model")
-    agent = str(tool_input.get("subagent_type") or "").strip()
-    if isinstance(model, str) and model.strip():
-        tier, how = tier_of(model, tiers), "model"
-    elif agent in _agent_tiers(routing):
-        tier, how = _agent_tiers(routing)[agent], "agent"
-    else:
-        chair_model = _session_model(session_id)
-        tier = tier_of(chair_model, tiers) if chair_model else None
-        how = "inherit"
-        if tier is None:
-            tier = "chair"   # no marker or an unknown chair model: it IS the chair
+    tier, how = spawn_tier(data, tool_input, tiers, routing)
     if tier is None or rank(tier, order) < 0 or rank(lo, order) < 0:
         _metric("route_pass", session_id, cls=cls, tier=tier, how=how,
                 reason="unresolved")
@@ -866,8 +882,122 @@ def route_check(data, tool_input, text):
             f"{tiers.get(hi, {}).get('model', hi)}). If the work really needs "
             "a stronger tier, re-classify it (`hard`, `security`, `verify`)."
         )
+    effort = str(tool_input.get("effort") or "").strip().lower()
+    cap = str(tiers.get(tier, {}).get("max_effort") or "").strip().lower()
+    if effort in EFFORT_ORDER and cap in EFFORT_ORDER and \
+            EFFORT_ORDER.index(effort) > EFFORT_ORDER.index(cap):
+        _metric("route_deny", session_id, reason="effort-cap", cls=cls,
+                tier=tier, effort=effort)
+        return (
+            f"ROUTE GUARD: the `{tier}` tier ({tiers[tier].get('model')}) is capped "
+            f"at `{cap}` effort; this spawn asks for `{effort}`. Re-spawn at "
+            f"`{cap}` — if the work truly needs more, that is an escalation to "
+            "the next tier up, not more effort on this one."
+        )
     _metric("route_pass", session_id, cls=cls, tier=tier, how=how)
     return None
+
+
+DEFAULT_BUDGET_SPAWNS = 60
+DEFAULT_BUDGET_HEAVY = 20
+
+
+def _budget_limits(cwd):
+    """(spawn cap, heavy cap). Env sets the session default; a
+    `.workflow/BUDGET.json` in the project (found like the ledger, from
+    cwd up to the repo root) raises or lowers it mid-session with no
+    restart — which is how the user answers a cap deny."""
+    spawns = env_int("ORCH_BUDGET_SPAWNS", DEFAULT_BUDGET_SPAWNS)
+    heavy = env_int("ORCH_BUDGET_HEAVY", DEFAULT_BUDGET_HEAVY)
+    ledger = find_ledger(cwd)
+    wf = os.path.dirname(ledger) if ledger else None
+    if wf is None:
+        d = os.path.realpath(cwd) if isinstance(cwd, str) and cwd else None
+        if d and os.path.isdir(os.path.join(d, ".workflow")):
+            wf = os.path.join(d, ".workflow")
+    if wf:
+        try:
+            with open(os.path.join(wf, "BUDGET.json"), encoding="utf-8") as f:
+                over = json.load(f)
+            if isinstance(over, dict):
+                spawns = max(0, int(over.get("spawns", spawns)))
+                heavy = max(0, int(over.get("heavy", heavy)))
+        except (OSError, ValueError, TypeError):
+            pass
+    return spawns, heavy
+
+
+def budget_check(data, tool_input):
+    """Budget governor: count every allowed spawn this session, and the
+    heavy-tier ones separately (heavy = the heavy tier or the chair).
+
+    Past half of a cap (at least one spawn always runs free) the NEXT
+    spawn of that kind is denied once — a
+    checkpoint, not a stop: re-issue it unchanged and it passes. At the
+    cap every further spawn of that kind is denied until the user raises
+    it in `.workflow/BUDGET.json`. A cap of 0 disables that count's gate;
+    ORCH_BUDGET=0 disables the governor. Counts only what actually runs:
+    a spawn another gate denied is never counted."""
+    if (os.environ.get("ORCH_BUDGET") or "").strip() == "0":
+        return None
+    session_id = data.get("session_id")
+    path = tmp_json("orch-budget", session_id)
+    if not path:
+        return None
+    tier, _ = spawn_tier(data, tool_input)
+    heavy = tier in ("heavy", "chair")
+    cap_all, cap_heavy = _budget_limits(data.get("cwd"))
+
+    def mutate(state):
+        try:
+            n = int(state.get("spawns") or 0)
+            h = int(state.get("heavy") or 0)
+        except (TypeError, ValueError):
+            n, h = 0, 0
+        warned = state.get("warned") if isinstance(state.get("warned"), list) else []
+        nn, nh = n + 1, h + (1 if heavy else 0)
+        verdict = None
+        if heavy and cap_heavy and nh > cap_heavy:
+            verdict = ("cap", "heavy", h, cap_heavy)
+        elif cap_all and nn > cap_all:
+            verdict = ("cap", "spawns", n, cap_all)
+        elif heavy and cap_heavy and nh > max(1, cap_heavy // 2) and "heavy" not in warned:
+            verdict = ("warn", "heavy", h, cap_heavy)
+            warned.append("heavy")
+        elif cap_all and nn > max(1, cap_all // 2) and "spawns" not in warned:
+            verdict = ("warn", "spawns", n, cap_all)
+            warned.append("spawns")
+        if verdict is None:
+            n, h = nn, nh
+        state.update(spawns=n, heavy=h, warned=warned)
+        return state, (verdict, n, h)
+
+    result = update_state(path, mutate)
+    if not result:
+        return None
+    verdict, n, h = result
+    if verdict is None:
+        _metric("budget_count", session_id, tier=tier, spawns=n, heavy=h)
+        return None
+    kind, what, used, cap = verdict
+    label = "heavy-tier spawns (heavy tier or the chair itself)" if what == "heavy" else "spawns"
+    if kind == "warn":
+        _metric("budget_warn", session_id, what=what, used=used, cap=cap)
+        return (
+            f"BUDGET CHECKPOINT: this session has used {used} of {cap} {label}. "
+            "Before re-issuing, check: could this go a tier down (verify and "
+            "implement run on bulk; scans on cheap)? Are you re-verifying a "
+            "close that already passed? Is a worker's context ballooning — "
+            "re-brief a fresh one instead? Re-issue the spawn unchanged to "
+            "proceed; this checkpoint fires once per session."
+        )
+    _metric("budget_cap", session_id, what=what, used=used, cap=cap)
+    return (
+        f"BUDGET CAP: this session has used all {cap} {label}. STOP and tell "
+        "the user what is done, what is left, and what it would cost. Only the "
+        "user raises the cap: `.workflow/BUDGET.json` with "
+        '`{"spawns": <n>, "heavy": <n>}` takes effect immediately.'
+    )
 
 
 def _guard(data):
@@ -954,6 +1084,21 @@ def main():
         _guard(data)
     except Exception:
         return  # a guard fails open; it never crashes the hook pipeline
+    # The budget runs LAST and only on spawns every other gate allowed:
+    # a denied spawn does not run, so it must not be counted.
+    try:
+        if DENIED or (data.get("tool_name") or "") not in ("Agent", "Task"):
+            return
+        tool_input = data.get("tool_input")
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+        if str(tool_input.get("subagent_type") or "").strip().lower() == "fork":
+            return
+        reason = budget_check(data, tool_input)
+        if reason:
+            _deny(reason)
+    except Exception:
+        return
 
 
 if __name__ == "__main__":

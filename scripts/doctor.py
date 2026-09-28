@@ -198,6 +198,18 @@ def check_skills():
         (ok if n < cap else warn)(f"skill {name}", f"{n} chars (budget {cap})")
 
 
+def check_gates():
+    def on(name):
+        return (os.environ.get(name) or "").strip() != "0"
+    spawns = os.environ.get("ORCH_BUDGET_SPAWNS") or "60"
+    heavy = os.environ.get("ORCH_BUDGET_HEAVY") or "20"
+    ok("budget", (f"{spawns} spawns / {heavy} heavy per session; raise mid-session "
+                  "with .workflow/BUDGET.json") if on("ORCH_BUDGET") else "off (ORCH_BUDGET=0)")
+    ok("solo guard", f"chair's edit #{os.environ.get('ORCH_SOLO_EDITS') or '3'} with no worker "
+       "is denied once" if on("ORCH_SOLO_GUARD") else "off (ORCH_SOLO_GUARD=0)")
+    ok("reminder", "one line on every prompt" if on("ORCH_REMIND") else "off (ORCH_REMIND=0)")
+
+
 def check_tmux():
     if shutil.which("tmux"):
         ok("tmux", "present; finished teammates will be reaped")
@@ -259,6 +271,7 @@ def main():
     check_agents(tiers, routing)
     check_commands()
     check_skills()
+    check_gates()
     check_tmux()
     check_metrics()
     check_workflow()

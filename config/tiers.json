@@ -1,30 +1,52 @@
 {
-  "$comment": "The ONLY file that names a model. Tiers are roles; models are interchangeable. `model` is what agents/ pin and what the route guard expects; `match` are substrings that identify a session model as belonging to this tier (word-bounded, case-insensitive); `fallbacks` is the order to try when the tier's model is unavailable or its limit is spent. Override per machine at ~/.claude/orchestrator/tiers.json (same shape, any subset of keys).",
+  "$comment": "The ONLY file that names a model. Tiers are roles; models are interchangeable. `model` is what agents/ pin and what the route guard expects; `match` are substrings that identify a session model as belonging to this tier (word-bounded, case-insensitive); `fallbacks` is the order to try when the tier's model is unavailable or its limit is spent. Override per machine at ~/.claude/orchestrator/tiers.json (same shape, any subset of keys). `max_effort` caps the reasoning effort any spawn on that tier may use.",
   "version": 1,
   "tiers": {
     "chair": {
       "role": "Plans, briefs, decides, arbitrates, accepts. Never does volume.",
       "model": "fable",
-      "match": ["fable"],
-      "fallbacks": ["opus", "sonnet"]
+      "match": [
+        "fable"
+      ],
+      "fallbacks": [
+        "opus",
+        "sonnet"
+      ],
+      "max_effort": "max"
     },
     "heavy": {
       "role": "Predictably hard slices: architecture, irreversible migrations, stubborn debugging, ALL security review, fresh-eyes verification.",
       "model": "opus",
-      "match": ["opus"],
-      "fallbacks": ["fable", "sonnet"]
+      "match": [
+        "opus"
+      ],
+      "fallbacks": [
+        "fable",
+        "sonnet"
+      ],
+      "max_effort": "xhigh"
     },
     "bulk": {
       "role": "The volume: implementation to spec, tests, refactors, briefs, standard review, research synthesis.",
       "model": "sonnet",
-      "match": ["sonnet"],
-      "fallbacks": ["opus"]
+      "match": [
+        "sonnet"
+      ],
+      "fallbacks": [
+        "opus"
+      ],
+      "max_effort": "max"
     },
     "cheap": {
       "role": "Mechanical lookups: grep, scan, fetch-to-disk, format checks, report-shape validation.",
       "model": "haiku",
-      "match": ["haiku"],
-      "fallbacks": ["sonnet"]
+      "match": [
+        "haiku"
+      ],
+      "fallbacks": [
+        "sonnet"
+      ],
+      "max_effort": "low"
     }
   }
 }
